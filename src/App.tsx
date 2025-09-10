@@ -22,6 +22,22 @@ interface ProgressUpdate {
   current_step_number?: number;
 }
 
+interface RasterData {
+  data: number[][];
+  bounds: RasterBounds;
+  transform: number[];
+}
+
+interface AllSummaryData {
+  total_shadow_hours: number[][];
+  avg_shadow_percentage: number[][];
+  max_consecutive_shadow: number[][];
+  morning_shadow_hours: number[][];
+  afternoon_shadow_hours: number[][];
+  bounds: RasterBounds;
+  transform: number[];
+}
+
 function App() {
   const [config, setConfig] = useState<Config>({
     dtm_path: '',
@@ -42,6 +58,8 @@ function App() {
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
   const [rasterBounds, setRasterBounds] = useState<RasterBounds | null>(null);
+  const [averageShadowRaster, setAverageShadowRaster] = useState<RasterData | null>(null);
+  const [allSummaryData, setAllSummaryData] = useState<AllSummaryData | null>(null);
 
   // Progress state
   const [progressData, setProgressData] = useState<ProgressUpdate>({
@@ -116,6 +134,14 @@ function App() {
       // Load first timestamp
       const shadowData = await invoke<number[][]>('get_shadow_at_time', { timeIndex: 0 });
       setShadowData(shadowData);
+      
+      // Load average shadow raster (Band 2)
+      const averageRaster = await invoke<RasterData>('get_average_shadow_raster');
+      setAverageShadowRaster(averageRaster);
+      
+      // Load all summary data for tooltips and popups
+      const summaryData = await invoke<AllSummaryData>('get_all_summary_data');
+      setAllSummaryData(summaryData);
     } catch (error) {
       console.error('Calculation failed:', error);
       setError(`Calculation failed: ${error}`);
@@ -274,9 +300,9 @@ function App() {
         <main className={`flex-1 relative ${isCalculating ? 'pointer-events-none' : ''}`}>
           <MapView 
             onAOIDrawn={handleAOIDrawn}
-            shadowData={shadowData}
-            hasResults={hasResults}
             rasterBounds={rasterBounds}
+            averageShadowRaster={averageShadowRaster}
+            allSummaryData={allSummaryData}
           />
           
           {hasResults && (
