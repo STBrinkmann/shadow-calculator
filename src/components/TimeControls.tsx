@@ -5,9 +5,10 @@ import { format, parseISO } from 'date-fns';
 interface TimeControlsProps {
   onConfigChange: (config: any) => void;
   config: any;
+  disabled?: boolean;
 }
 
-const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config }) => {
+const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config, disabled = false }) => {
   const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'));
   const [hourInterval, setHourInterval] = useState(1);
@@ -45,7 +46,8 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config }) =
           type="date"
           value={startDate}
           onChange={(e) => setStartDate(e.target.value)}
-          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          disabled={disabled}
+          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
         />
       </div>
 
@@ -58,7 +60,8 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config }) =
           value={endDate}
           min={startDate}
           onChange={(e) => setEndDate(e.target.value)}
-          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          disabled={disabled}
+          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
         />
       </div>
 
@@ -70,7 +73,8 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config }) =
         <select
           value={hourInterval}
           onChange={(e) => setHourInterval(Number(e.target.value))}
-          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          disabled={disabled}
+          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <option value={0.5}>30 minutes</option>
           <option value={1}>1 hour</option>

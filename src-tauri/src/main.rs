@@ -9,13 +9,12 @@ mod sun_position;
 mod raster_io;
 
 use types::*;
-use shadow_engine::ShadowEngine;
+use shadow_engine::{ShadowEngine, ProgressUpdate};
 use raster_io::RasterIO;
 use std::path::Path;
 use tauri::State;
 use std::sync::Mutex;
 use serde::{Serialize, Deserialize};
-use chrono::Local;
 
 struct AppState {
     current_config: Mutex<Option<Config>>,
@@ -78,6 +77,7 @@ async fn load_rasters(
 async fn calculate_shadows(
     config: Config,
     state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     println!("Starting shadow calculation with config: {:?}", config);
     
@@ -120,7 +120,7 @@ async fn calculate_shadows(
     let mut config_with_meter_buffer = config.clone();
     config_with_meter_buffer.buffer_meters = config.buffer_meters; // Keep original meters value
     
-    let engine = ShadowEngine::new(dtm_2d, dsm_2d, resolution, config_with_meter_buffer);
+    let engine = ShadowEngine::new_with_app_handle(dtm_2d, dsm_2d, resolution, config_with_meter_buffer, app_handle);
     let results = engine.calculate_shadows()
         .map_err(|e| format!("Shadow calculation failed: {}", e))?;
     

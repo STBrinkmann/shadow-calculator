@@ -1,9 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import MapView from './components/LeafletMapView'; // or SimpleMapView
 import TimeControls from './components/TimeControls';
 import FileUpload from './components/FileUpload';
 import ResultsPanel from './components/ResultsPanel';
+import ProgressModal from './components/ProgressModal';
 import { invoke } from '@tauri-apps/api/tauri';
+import { listen } from '@tauri-apps/api/event';
 import { Config, ShadowQuality } from './types';
 
 interface RasterBounds {
@@ -11,6 +13,13 @@ interface RasterBounds {
   max_lon: number;
   min_lat: number;
   max_lat: number;
+}
+
+interface ProgressUpdate {
+  progress: number;
+  current_step: string;
+  total_steps?: number;
+  current_step_number?: number;
 }
 
 function App() {
@@ -33,6 +42,25 @@ function App() {
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
   const [rasterBounds, setRasterBounds] = useState<RasterBounds | null>(null);
+
+  // Progress state
+  const [progressData, setProgressData] = useState<ProgressUpdate>({
+    progress: 0,
+    current_step: 'Initializing...',
+    total_steps: undefined,
+    current_step_number: undefined,
+  });
+
+  // Listen for progress updates from the backend
+  useEffect(() => {
+    const unlisten = listen<ProgressUpdate>('progress-update', (event) => {
+      setProgressData(event.payload);
+    });
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
 
   const handleFilesSelected = useCallback((dtmPath: string, dsmPath: string) => {
     setConfig(prev => ({ ...prev, dtm_path: dtmPath, dsm_path: dsmPath }));
@@ -67,6 +95,15 @@ function App() {
 
     setIsCalculating(true);
     setError('');
+    
+    // Reset progress data
+    setProgressData({
+      progress: 0,
+      current_step: 'Starting calculation...',
+      total_steps: undefined,
+      current_step_number: undefined,
+    });
+
     try {
       const result = await invoke('calculate_shadows', { config });
       console.log(result);
@@ -134,7 +171,7 @@ function App() {
       )}
       
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-80 bg-gray-800 p-4 overflow-y-auto border-r border-gray-700">
+        <aside className={`w-80 bg-gray-800 p-4 overflow-y-auto border-r border-gray-700 ${isCalculating ? 'pointer-events-none opacity-75' : ''}`}>
           <FileUpload onFilesSelected={handleFilesSelected} />
           
           {rasterBounds && (
@@ -151,6 +188,7 @@ function App() {
             <TimeControls 
               onConfigChange={handleTimeConfigChange}
               config={config}
+              disabled={isCalculating}
             />
           </div>
           
@@ -166,7 +204,8 @@ function App() {
                 type="number"
                 value={config.buffer_meters}
                 onChange={(e) => setConfig(prev => ({ ...prev, buffer_meters: Number(e.target.value) }))}
-                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                disabled={isCalculating}
+                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <p className="text-xs text-gray-400 mt-1">
                 Will be converted to degrees based on latitude
@@ -178,7 +217,8 @@ function App() {
               <select
                 value={config.angle_precision}
                 onChange={(e) => setConfig(prev => ({ ...prev, angle_precision: Number(e.target.value) }))}
-                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                disabled={isCalculating}
+                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value={0.01}>0.01°</option>
                 <option value={0.1}>0.1°</option>
@@ -192,7 +232,8 @@ function App() {
               <select
                 value={config.shadow_quality}
                 onChange={(e) => setConfig(prev => ({ ...prev, shadow_quality: e.target.value as ShadowQuality }))}
-                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                disabled={isCalculating}
+                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="Fast">Fast (Binary)</option>
                 <option value="Normal">Normal (2x2 edges)</option>
@@ -214,13 +255,15 @@ function App() {
             <div className="mt-4 space-y-2">
               <button
                 onClick={() => handleExport('geotiff')}
-                className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-md transition-colors"
+                disabled={isCalculating}
+                className="w-full py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md transition-colors"
               >
                 Export as GeoTIFF
               </button>
               <button
                 onClick={() => handleExport('csv')}
-                className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-md transition-colors"
+                disabled={isCalculating}
+                className="w-full py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md transition-colors"
               >
                 Export as CSV
               </button>
@@ -228,7 +271,7 @@ function App() {
           )}
         </aside>
         
-        <main className="flex-1 relative">
+        <main className={`flex-1 relative ${isCalculating ? 'pointer-events-none' : ''}`}>
           <MapView 
             onAOIDrawn={handleAOIDrawn}
             shadowData={shadowData}
@@ -246,6 +289,15 @@ function App() {
           )}
         </main>
       </div>
+      
+      {/* Progress Modal */}
+      <ProgressModal
+        isVisible={isCalculating}
+        progress={progressData.progress}
+        currentStep={progressData.current_step}
+        totalSteps={progressData.total_steps}
+        currentStepNumber={progressData.current_step_number}
+      />
     </div>
   );
 }

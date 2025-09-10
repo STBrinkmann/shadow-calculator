@@ -4,7 +4,17 @@ use ndarray::{Array2, Array3, s};
 use rayon::prelude::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager};
+use serde::{Serialize, Deserialize};
 use chrono::Timelike;  // IMPORTANT: Add this import for hour() method
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressUpdate {
+    pub progress: f64,
+    pub current_step: String,
+    pub total_steps: Option<usize>,
+    pub current_step_number: Option<usize>,
+}
 
 pub struct ShadowEngine {
     _dtm: Array2<f32>,
@@ -13,6 +23,7 @@ pub struct ShadowEngine {
     resolution: f64,
     sun_calculator: Arc<Mutex<SunCalculator>>,
     config: Config,
+    app_handle: Option<AppHandle>,
 }
 
 impl ShadowEngine {
@@ -34,6 +45,41 @@ impl ShadowEngine {
             resolution,
             sun_calculator,
             config,
+            app_handle: None,
+        }
+    }
+
+    pub fn new_with_app_handle(dtm: Array2<f32>, dsm: Array2<f32>, resolution: f64, config: Config, app_handle: AppHandle) -> Self {
+        let heights = &dsm - &dtm;
+        let polygon = config.to_polygon().unwrap_or(geo_types::Polygon::new(
+            geo_types::LineString::from(vec![(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]),
+            vec![],
+        ));
+        let centroid = geo::algorithm::centroid::Centroid::centroid(&polygon).unwrap_or(geo_types::Point::new(0.0, 0.0));
+        let sun_calculator = Arc::new(Mutex::new(
+            SunCalculator::new(centroid.y(), centroid.x(), config.angle_precision)
+        ));
+        
+        Self {
+            _dtm: dtm,
+            dsm,
+            heights,
+            resolution,
+            sun_calculator,
+            config,
+            app_handle: Some(app_handle),
+        }
+    }
+
+    fn emit_progress(&self, progress: f64, step: String, total_steps: Option<usize>, current_step: Option<usize>) {
+        if let Some(app) = &self.app_handle {
+            let update = ProgressUpdate {
+                progress,
+                current_step: step,
+                total_steps,
+                current_step_number: current_step,
+            };
+            let _ = app.emit_all("progress-update", &update);
         }
     }
 
@@ -44,37 +90,39 @@ impl ShadowEngine {
         
         let mut shadow_fraction = Array3::<f32>::zeros((n_times, n_rows, n_cols));
         
+        // Emit initial progress
+        self.emit_progress(0.0, "Initializing shadow calculation...".to_string(), Some(n_times), Some(0));
+        
+        // Create progress bar for console (keep for debugging)
         let pb = ProgressBar::new(n_times as u64);
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
             .unwrap());
         
-        // Parallel processing per timestamp
-        let results: Vec<_> = timestamps
-            .par_iter()
-            .enumerate()
-            .map(|(t_idx, timestamp)| {
-                let mut sun_calc = self.sun_calculator.lock().unwrap();
-                let (azimuth, elevation) = sun_calc.get_position(timestamp);
-                drop(sun_calc);
-                
-                let shadow_map = if elevation <= 0.0 {
-                    Array2::<f32>::ones((n_rows, n_cols))
-                } else {
-                    self.calculate_shadow_map(azimuth, elevation)
-                };
-                
-                pb.inc(1);
-                (t_idx, shadow_map)
-            })
-            .collect();
+        // Process timestamps sequentially to emit proper progress
+        for (t_idx, timestamp) in timestamps.iter().enumerate() {
+            let mut sun_calc = self.sun_calculator.lock().unwrap();
+            let (azimuth, elevation) = sun_calc.get_position(timestamp);
+            drop(sun_calc);
+            
+            let step_description = "Calculating shadows...".to_string();
+            let progress = (t_idx as f64) / (n_times as f64) * 100.0;
+            
+            self.emit_progress(progress, step_description, Some(n_times), Some(t_idx + 1));
+            
+            let shadow_map = if elevation <= 0.0 {
+                Array2::<f32>::ones((n_rows, n_cols))
+            } else {
+                self.calculate_shadow_map(azimuth, elevation)
+            };
+            
+            shadow_fraction.slice_mut(s![t_idx, .., ..]).assign(&shadow_map);
+            
+            pb.set_position(t_idx as u64 + 1);
+        }
         
         pb.finish_with_message("Shadow calculation complete");
-        
-        // Assemble results
-        for (t_idx, shadow_map) in results {
-            shadow_fraction.slice_mut(s![t_idx, .., ..]).assign(&shadow_map);
-        }
+        self.emit_progress(100.0, "Shadow calculation complete".to_string(), Some(n_times), Some(n_times));
         
         let summary_stats = self.calculate_summary_stats(&shadow_fraction, &timestamps);
         
