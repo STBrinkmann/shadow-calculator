@@ -1,300 +1,248 @@
 # 🌞 Shadow Calculator
 
-A high-performance desktop application for calculating and visualizing shadows cast by terrain and objects (buildings, trees) using Digital Terrain Models (DTM) and Digital Surface Models (DSM).
+> *"Because apparently, sticking a stick in the ground and checking the shadow wasn't complicated enough."*
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
-![Node](https://img.shields.io/badge/node-16%2B-green.svg)
+A desktop application that takes the ancient art of shadow-telling and completely overengineers it with Rust, mathematics, and an unhealthy amount of precision. Calculate and visualize shadows from terrain and buildings using Digital Terrain Models (DTM) and Digital Surface Models (DSM). 
 
-## ✨ Features
+Perfect for vampire real estate agents, urban planners who've given up on sundials, and anyone who's ever wondered "but what if I need to know the *exact* shadow at 2:37 PM on a Tuesday six months from now?"
 
-- **High-Performance Shadow Calculation**: Rust-based engine with parallel processing
-- **Continuous Shadow Values**: Sub-pixel accuracy with configurable quality levels
-- **Pre-computed Sun Positions**: Optimized with angle rounding for faster calculations  
-- **Interactive Map Interface**: Draw areas of interest directly on satellite imagery
-- **Time Series Analysis**: Animate shadows throughout the day/year
-- **Multiple Export Formats**: GeoTIFF with summary layers, CSV for analysis
-- **Real-time Visualization**: See shadows overlaid on the map
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.70+-red.svg)](https://www.rust-lang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-1.5-blue.svg)](https://tauri.app/)
 
-## 🚀 Quick Start
+## ✨ What This Thing Actually Does
 
-### Prerequisites
+- 🔥 **Blazingly Fast™** shadow calculations (it's Rust, we're legally required to say "blazingly fast")
+- 🎯 **Sub-pixel precision** because regular pixel precision is for peasants  
+- 🗺️ **Interactive mapping** - draw areas and watch shadows dance across time
+- 📊 **Time-series analysis** - animate shadows like it's a Netflix show
+- 🎨 **Pretty visualizations** with hover tooltips that show you exactly how doomed your picnic spot is
+- 📤 **Export everything** as GeoTIFF or CSV, because data wants to be free
+- 🏃‍♂️ **Real-time progress** so you know the computer is actually working and not just having an existential crisis
 
-- **Rust**: 1.70 or higher ([Install Rust](https://rustup.rs/))
-- **Node.js**: 16.x or higher ([Install Node](https://nodejs.org/))
-- **GDAL**: 3.0 or higher (see installation below)
+## 🚀 Getting Started (AKA "The Ritual")
 
-### System Dependencies
+### What You'll Need
 
-#### Ubuntu/Debian
+Before we can calculate shadows with the precision of a Swiss watch, you'll need:
+
+- **Rust** (1.70+) - [Get it here](https://rustup.rs/) because memory safety is sexy
+- **Node.js** (16+) - [Download](https://nodejs.org/) for the frontend magic
+- **GDAL** (3.0+) - The geospatial Swiss Army knife (installation below)
+
+### Installing GDAL (The Fun Part™)
+
+**Ubuntu/Debian** (Easy Mode):
 ```bash
 sudo apt-get update
-sudo apt-get install -y \
-    gdal-bin libgdal-dev \
+sudo apt-get install -y gdal-bin libgdal-dev \
     build-essential pkg-config libssl-dev \
     libwebkit2gtk-4.1-dev libgtk-3-dev \
     libayatana-appindicator3-dev librsvg2-dev
 ```
 
-#### macOS
+**macOS** (Homebrew to the Rescue):
 ```bash
 brew install gdal pkg-config
 ```
 
-#### Windows
-Use WSL2 with Ubuntu, or install GDAL from [OSGeo4W](https://trac.osgeo.org/osgeo4w/)
+**Windows** (Choose Your Pain):
+- Option A: Use WSL2 with Ubuntu (recommended for sanity)
+- Option B: Install from [OSGeo4W](https://trac.osgeo.org/osgeo4w/) and question your life choices
 
 ### Installation
 
-1. **Clone the repository** (or create new project)
+1. **Clone this masterpiece**:
 ```bash
-mkdir shadow-calculator
+git clone https://github.com/your-username/shadow-calculator.git
 cd shadow-calculator
 ```
 
-2. **Run the automated setup**
+2. **Install the dependencies**:
 ```bash
-chmod +x setup.sh
-./setup.sh
+npm install
 ```
 
-Or manually:
+3. **Build the Rust backend** (grab a coffee, it's compiling):
 ```bash
-# Install Node dependencies
-npm install
-
-# Build Rust backend
 cd src-tauri
 cargo build --release
 cd ..
 ```
 
-3. **Configure Mapbox**
-   - Get a free token at [mapbox.com](https://www.mapbox.com/)
-   - Add to `.env.local`:
-```bash
-VITE_MAPBOX_TOKEN=your_token_here
-```
-
-4. **Create test data** (optional)
-```bash
-python3 create_test_data.py
-```
-
-5. **Run the application**
+4. **Launch the app**:
 ```bash
 npm run tauri dev
 ```
 
-## 📖 Usage Guide
+And voilà! You now have a shadow calculator that would make ancient sundial makers weep with either joy or existential dread.
 
-### 1. Load Raster Data
-- Click "Select DTM file" to load your Digital Terrain Model
-- Click "Select DSM file" to load your Digital Surface Model
-- Both files must have the same resolution (e.g., 0.5m)
+## 📖 How to Use This Beautiful Monster
 
-### 2. Define Area of Interest
-- Use the polygon tool on the map to draw your area
-- The tool is in the top-left corner of the map
-- Draw clockwise for best results
+### Step 1: Feed It Data
+Load your DTM (terrain) and DSM (terrain + buildings/trees) files. Both should be GeoTIFF format and match in resolution. Think of DTM as "the world if it were really flat and boring" and DSM as "the world with all the fun stuff that casts shadows."
 
-### 3. Configure Parameters
+### Step 2: Draw Your Area of Interest
+Use the polygon tool to draw where you want shadows calculated. Pro tip: drawing clockwise is preferred, but the app won't judge you if you go counterclockwise (much).
 
-#### Time Settings
-- **Date Range**: Select start and end dates for analysis
-- **Interval**: Choose time step (30 min to 24 hours)
+### Step 3: Configure the Madness
+- **Time Range**: When do you want shadows? Next Tuesday? The entire summer of 2025?
+- **Interval**: How often? Every 30 minutes if you're obsessive, every few hours if you value your sanity
+- **Buffer**: Extra area to catch shadows from tall stuff nearby (default: 50m, or "about half a football field")
+- **Shadow Quality**: From "Fast" (good enough) to "Scientific" (pixel-perfect paranoia)
 
-#### Advanced Settings
-- **Buffer**: Extra area around AOI to catch shadows from tall objects (default: 50m)
-- **Angle Precision**: Round sun angles for caching (0.01° to 1.0°)
-- **Shadow Quality**:
-  - Fast: Binary shadows only
-  - Normal: 2×2 sub-sampling at edges
-  - High: 4×4 sub-sampling at edges
-  - Scientific: 8×8 full sub-sampling
+### Step 4: Click "Calculate Shadows" 
+Then sit back and watch the progress bar. The app will:
+1. Calculate sun positions (using actual astronomy, not guesswork)
+2. Cast virtual rays from every pixel toward the sun
+3. Check if terrain blocks each ray (the computationally expensive part)
+4. Apply fancy edge smoothing (because sharp shadows are so last century)
 
-### 4. Calculate Shadows
-Click "Calculate Shadows" to start processing. Progress will be shown.
+### Step 5: Marvel at Your Results
+- **Hover over the map** to see exact shadow percentages
+- **Click anywhere** for detailed shadow statistics in a beautiful popup
+- **Use time controls** to animate through your data like a shadow time-lord
+- **Export results** in multiple formats for further analysis or bragging rights
 
-### 5. Visualize Results
-- Use playback controls to animate through time
-- Adjust playback speed (0.5x to 5x)
-- View statistics in real-time
+## 🎯 Shadow Quality Modes
 
-### 6. Export Results
+- **Fast**: Binary shadows only. "Is it shadow? Yes/No." Simple and speedy.
+- **Normal**: 2×2 sub-sampling at edges. Good balance of quality and performance.
+- **High**: 4×4 sub-sampling at edges. For when "good enough" isn't good enough.
+- **Scientific**: 8×8 full sub-sampling. For when you need PhD-level shadow precision.
 
-#### GeoTIFF Format
-- Layer 0: Total shadow hours
-- Layer 1: Average shadow percentage
-- Layer 2: Maximum consecutive shadow hours
-- Layer 3: Morning shadow hours (before noon)
-- Layer 4: Afternoon shadow hours (after noon)
-- Layers 5+: Individual timestamps
+## 🔧 The Technical Wizardry Behind the Curtain
 
-#### CSV Format
-Long format with columns:
-- cell_id, lat, lon, datetime, shadow_fraction
+### Shadow Algorithm
+1. **Ray Marching**: Cast rays from each pixel toward the sun (like reverse photon tracing)
+2. **Terrain Intersection**: Check if the ray hits any terrain on its way to the sun
+3. **Edge Refinement**: Sub-sample pixels at shadow boundaries for smooth edges
+4. **Parallel Processing**: Uses all your CPU cores because why have them idle?
 
-## 🏗️ Project Structure
+### Sun Position Calculations
+- Julian day calculations for astronomical accuracy
+- Equation of time corrections (because Earth's orbit isn't a perfect circle)
+- Solar declination based on date (fancy astronomy math)
+- Local solar time adjustments (timezone handling that actually works)
+
+### Performance Optimizations
+- Pre-computed sun positions with intelligent caching
+- Angle rounding to reduce redundant calculations
+- Parallel processing across time points
+- Memory-efficient streaming for large datasets
+
+## 📊 Performance Expectations
+
+For a typical 1 hectare area at 0.5m resolution:
+- **40,000 pixels** to process
+- **~5,800 time points** (8 months, hourly)
+- **~900 MB memory** for full results
+- **2-10 minutes** processing time (depending on quality settings and how patient you are)
+
+## 🐛 When Things Go Wrong
+
+### "GDAL Not Found" Errors
+```bash
+# Check if GDAL is properly installed
+gdal-config --version
+
+# If that fails, GDAL isn't installed or isn't in your PATH
+# Go back to the installation section and try again
+```
+
+### Memory Issues
+Your computer is trying to tell you something. Consider:
+- Reducing the time range
+- Using a coarser time interval
+- Switching to "Fast" quality mode
+- Processing smaller areas
+- Downloading more RAM (just kidding, that doesn't work)
+
+### Build Errors
+When all else fails, the nuclear option:
+```bash
+# Clear everything and start fresh
+rm -rf node_modules src-tauri/target
+npm install
+cd src-tauri && cargo clean && cargo build --release
+```
+
+## 📁 Project Structure
 
 ```
 shadow-calculator/
-├── src-tauri/           # Rust backend
+├── src-tauri/                # The Rust backend (where the magic happens)
 │   ├── src/
-│   │   ├── main.rs          # Tauri application entry
-│   │   ├── types.rs         # Type definitions
-│   │   ├── shadow_engine.rs # Core shadow calculations
-│   │   ├── sun_position.rs  # Solar position calculator
-│   │   └── raster_io.rs     # GDAL raster I/O
-│   └── Cargo.toml
-├── src/                 # React frontend
+│   │   ├── main.rs          # Tauri app entry point
+│   │   ├── shadow_engine.rs # Core shadow calculation engine
+│   │   ├── sun_position.rs  # Solar position calculations
+│   │   └── raster_io.rs     # GDAL file I/O operations
+├── src/                     # React frontend (the pretty face)
 │   ├── components/
-│   │   ├── MapView.tsx      # Mapbox map interface
-│   │   ├── TimeControls.tsx # Date/time configuration
-│   │   ├── FileUpload.tsx   # Raster file selection
-│   │   └── ResultsPanel.tsx # Results visualization
-│   ├── App.tsx
-│   └── main.tsx
-├── test_data/           # Test raster files
-├── package.json
-└── README.md
+│   │   ├── LeafletMapView.tsx    # Interactive map with all the bells and whistles
+│   │   ├── TimeControls.tsx      # Date/time configuration
+│   │   ├── FileUpload.tsx        # File selection interface
+│   │   ├── ResultsPanel.tsx      # Results visualization
+│   │   └── ProgressModal.tsx     # Progress display (so you know it's working)
+│   ├── App.tsx              # Main application component
+│   └── types.ts             # TypeScript definitions
+└── test_data/               # Sample data for testing
 ```
-
-## 🔧 Development
-
-### Frontend Development
-```bash
-# Hot-reload for UI changes
-npm run dev
-
-# Type checking
-npm run type-check
-
-# Build for production
-npm run build
-```
-
-### Backend Development
-```bash
-cd src-tauri
-
-# Check compilation
-cargo check
-
-# Run tests
-cargo test
-
-# Build optimized
-cargo build --release
-```
-
-### Creating a Release Build
-```bash
-npm run tauri build
-```
-
-The installer will be in `src-tauri/target/release/bundle/`
-
-## 🧮 Algorithm Details
-
-### Shadow Calculation
-1. **Ray Marching**: Cast rays from each cell toward the sun
-2. **Terrain Intersection**: Check if terrain blocks the ray
-3. **Edge Refinement**: Sub-sample cells at shadow boundaries
-4. **Parallel Processing**: Use all CPU cores via Rayon
-
-### Sun Position
-- Julian day calculation for accurate solar positioning
-- Equation of time correction
-- Solar declination based on date
-- Local solar time adjustment
-
-### Performance Optimizations
-- Pre-computed sun positions with caching
-- Angle rounding to reduce unique calculations
-- Parallel timestamp processing
-- Bilinear interpolation for smooth terrain sampling
-
-## 📊 Performance
-
-For a 1 hectare area at 0.5m resolution:
-- **Pixels**: 200×200 = 40,000 cells
-- **Time points**: ~5,800 (8 months hourly)
-- **Memory**: ~900 MB for full results
-- **Processing time**: 2-10 minutes depending on quality
-
-## 🐛 Troubleshooting
-
-### GDAL Installation Issues
-```bash
-# Verify GDAL is installed
-gdal-config --version
-
-# Set environment variables if needed
-export GDAL_DATA=/usr/share/gdal
-```
-
-### Mapbox Token Issues
-- Ensure token is in `.env.local`
-- Restart the app after adding token
-- Check console for error messages
-
-### Memory Issues
-For large areas, consider:
-- Reducing temporal resolution
-- Processing in chunks
-- Using "Fast" quality mode initially
-
-### Build Errors
-```bash
-# Clear caches and rebuild
-rm -rf node_modules src-tauri/target
-npm install
-cd src-tauri && cargo clean && cargo build
-```
-
-## 📚 Data Requirements
-
-### Input Rasters
-- **Format**: GeoTIFF (`.tif`, `.tiff`)
-- **Resolution**: 0.5m recommended, must match between DTM/DSM
-- **Projection**: Any supported by GDAL
-- **Size**: Up to 1000×1000 pixels performs well
-
-### Coordinate Systems
-Tested with:
-- Swiss CH1903+ / LV95 (EPSG:2056)
-- WGS84 / UTM zones (EPSG:326xx)
-- Local projected systems
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please:
+Found a bug? Have an idea? Want to make shadows even more complicated? Contributions are welcome!
+
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feature/even-better-shadows`)
 3. Make your changes
-4. Add tests if applicable
+4. Add tests if you're feeling responsible
 5. Submit a pull request
+
+Please check the [Contributing Guidelines](CONTRIBUTING.md) for more details.
 
 ## 📄 License
 
-MIT License - see LICENSE file for details
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
 
-## 🙏 Acknowledgments
+TL;DR: You can use this code for whatever you want, just don't blame us if your shadow calculations achieve sentience and start demanding workers' rights.
 
-- [Tauri](https://tauri.app/) - Desktop app framework
-- [Mapbox](https://www.mapbox.com/) - Map visualization
-- [GDAL](https://gdal.org/) - Geospatial data processing
-- [Rust](https://www.rust-lang.org/) - Systems programming
-- [React](https://react.dev/) - User interface
+## 🙏 Standing on the Shoulders of Giants
 
-## 📮 Support
+This project wouldn't exist without these amazing technologies:
 
-For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Check existing issues first
-- Provide sample data if reporting bugs
+- **[Tauri](https://tauri.app/)** - For making desktop apps that don't require a PhD in C++
+- **[Rust](https://www.rust-lang.org/)** - For memory safety and that sweet, sweet performance
+- **[Leaflet](https://leafletjs.com/)** - For maps that just work without requiring a mortgage
+- **[React](https://react.dev/)** - For making UIs less painful than they used to be
+- **[GDAL](https://gdal.org/)** - The Swiss Army knife of geospatial data
+- **[OpenStreetMap](https://www.openstreetmap.org/)** - For free map tiles because we're not made of money
+
+## 💡 Use Cases (Why Would Anyone Want This?)
+
+- **Solar panel planning** - Find the best spots that aren't in shadow all day
+- **Architecture and urban planning** - Ensure your building doesn't accidentally create a perpetual winter
+- **Agriculture** - Optimize crop placement because plants are picky about sunlight
+- **Photography** - Plan that perfect golden hour shot
+- **Vampire real estate** - Find properties with maximum shadow coverage
+- **Academic research** - When you need to publish something about shadows
+- **Because you can** - The most honest reason of all
+
+## 🆘 Support & Questions
+
+Having trouble? Don't suffer in silence:
+
+- 📋 [Open an issue](https://github.com/your-username/shadow-calculator/issues) on GitHub
+- 🔍 Check existing issues first (someone might have had the same problem)
+- 📊 Include sample data if you're reporting a bug
+- 🌍 Be descriptive about your environment and what you were trying to do
 
 ---
 
-Built with ❤️ for accurate shadow analysis in landscape planning, solar installations, and urban development.
+<div align="center">
+
+**Built with ☕ and mild obsession for accurate shadow analysis**
+
+*"Making simple things complicated since 2024"*
+
+</div>
