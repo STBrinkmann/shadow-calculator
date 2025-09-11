@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CalendarIcon, ClockIcon } from '@heroicons/react/24/outline';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 
 interface TimeControlsProps {
   onConfigChange: (config: any) => void;
@@ -8,7 +8,7 @@ interface TimeControlsProps {
   disabled?: boolean;
 }
 
-const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config, disabled = false }) => {
+const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config: _config, disabled = false }) => {
   const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'));
   const [hourInterval, setHourInterval] = useState(1);

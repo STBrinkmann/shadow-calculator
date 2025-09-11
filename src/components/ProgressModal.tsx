@@ -15,8 +15,8 @@ const ProgressModal: React.FC<ProgressModalProps> = ({
   isVisible,
   progress,
   currentStep,
-  totalSteps,
-  currentStepNumber,
+  totalSteps: _totalSteps,
+  currentStepNumber: _currentStepNumber,
   onCancel,
   canCancel = false
 }) => {

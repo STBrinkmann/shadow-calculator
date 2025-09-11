@@ -1,7 +1,7 @@
 use crate::types::*;
 use crate::sun_position::SunCalculator;
 use ndarray::{Array2, Array3, s};
-use rayon::prelude::*;
+// use rayon::prelude::*; // Currently unused
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -27,6 +27,7 @@ pub struct ShadowEngine {
 }
 
 impl ShadowEngine {
+    #[allow(dead_code)]
     pub fn new(dtm: Array2<f32>, dsm: Array2<f32>, resolution: f64, config: Config) -> Self {
         let heights = &dsm - &dtm;
         let polygon = config.to_polygon().unwrap_or(geo_types::Polygon::new(

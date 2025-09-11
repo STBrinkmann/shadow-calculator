@@ -99,6 +99,7 @@ impl RasterIO {
         })
     }
     
+    #[allow(dead_code)]
     pub fn write_geotiff(
         path: &Path,
         data: &Array3<f32>,

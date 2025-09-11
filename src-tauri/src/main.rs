@@ -9,7 +9,7 @@ mod sun_position;
 mod raster_io;
 
 use types::*;
-use shadow_engine::{ShadowEngine, ProgressUpdate};
+use shadow_engine::ShadowEngine;
 use raster_io::RasterIO;
 use std::path::Path;
 use tauri::State;
@@ -20,6 +20,14 @@ struct AppState {
     current_config: Mutex<Option<Config>>,
     current_results: Mutex<Option<ShadowResult>>,
     raster_bounds: Mutex<Option<RasterBounds>>,
+    clipped_raster_info: Mutex<Option<ClippedRasterInfo>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClippedRasterInfo {
+    bounds: RasterBounds,
+    transform: Vec<f64>,
+    dimensions: (usize, usize), // (rows, cols)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +119,25 @@ async fn calculate_shadows(
     let dtm_2d = dtm_clipped.data.slice(ndarray::s![0, .., ..]).to_owned();
     let dsm_2d = dsm_clipped.data.slice(ndarray::s![0, .., ..]).to_owned();
     
+    // Store clipped raster information for later visualization
+    let (n_rows, n_cols) = dtm_2d.dim();
+    let clipped_bounds = RasterBounds {
+        min_lon: dtm_clipped.transform[0],
+        max_lon: dtm_clipped.transform[0] + (n_cols as f64 * dtm_clipped.transform[1]),
+        min_lat: dtm_clipped.transform[3] + (n_rows as f64 * dtm_clipped.transform[5]), // transform[5] is negative
+        max_lat: dtm_clipped.transform[3],
+    };
+    
+    let clipped_info = ClippedRasterInfo {
+        bounds: clipped_bounds,
+        transform: dtm_clipped.transform.to_vec(),
+        dimensions: (n_rows, n_cols),
+    };
+    
+    let mut clipped_info_guard = state.clipped_raster_info.lock().unwrap();
+    *clipped_info_guard = Some(clipped_info);
+    drop(clipped_info_guard);
+    
     // Calculate pixel resolution in meters
     let resolution = degrees_to_meters(dtm_clipped.transform[1].abs(), center_lat);
     println!("Pixel resolution: {:.6}° = {:.2}m at latitude {:.3}°", 
@@ -186,6 +213,110 @@ async fn get_shadow_at_time(
             Ok(rows)
         }
         None => Err("No results available".to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RasterData {
+    data: Vec<Vec<f32>>,
+    bounds: RasterBounds,
+    transform: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AllSummaryData {
+    total_shadow_hours: Vec<Vec<f32>>,
+    avg_shadow_percentage: Vec<Vec<f32>>,
+    max_consecutive_shadow: Vec<Vec<f32>>,
+    morning_shadow_hours: Vec<Vec<f32>>,
+    afternoon_shadow_hours: Vec<Vec<f32>>,
+    bounds: RasterBounds,
+    transform: Vec<f64>,
+}
+
+#[tauri::command]
+async fn get_average_shadow_raster(
+    state: State<'_, AppState>,
+) -> Result<RasterData, String> {
+    let results = state.current_results.lock().unwrap();
+    let clipped_info = state.clipped_raster_info.lock().unwrap();
+    
+    match (results.as_ref(), clipped_info.as_ref()) {
+        (Some(results), Some(clipped_info)) => {
+            // Get the average shadow percentage data (Band 2, index 1)
+            let avg_shadow_slice = results.summary_stats.avg_shadow_percentage.slice(ndarray::s![0, .., ..]);
+            let data: Vec<Vec<f32>> = avg_shadow_slice.outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+            
+            // Verify dimensions match
+            let (n_rows, n_cols) = (data.len(), data[0].len());
+            if (n_rows, n_cols) != clipped_info.dimensions {
+                return Err(format!("Data dimensions mismatch: expected {:?}, got ({}, {})", 
+                    clipped_info.dimensions, n_rows, n_cols));
+            }
+            
+            Ok(RasterData {
+                data,
+                bounds: clipped_info.bounds.clone(),
+                transform: clipped_info.transform.clone(),
+            })
+        }
+        _ => Err("No results or clipped raster information available".to_string()),
+    }
+}
+
+#[tauri::command]
+async fn get_all_summary_data(
+    state: State<'_, AppState>,
+) -> Result<AllSummaryData, String> {
+    let results = state.current_results.lock().unwrap();
+    let clipped_info = state.clipped_raster_info.lock().unwrap();
+    
+    match (results.as_ref(), clipped_info.as_ref()) {
+        (Some(results), Some(clipped_info)) => {
+            // Extract all summary layers (Band 0 index)
+            let total_shadow_hours: Vec<Vec<f32>> = results.summary_stats.total_shadow_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+                
+            let avg_shadow_percentage: Vec<Vec<f32>> = results.summary_stats.avg_shadow_percentage
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+                
+            let max_consecutive_shadow: Vec<Vec<f32>> = results.summary_stats.max_consecutive_shadow
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+                
+            let morning_shadow_hours: Vec<Vec<f32>> = results.summary_stats.morning_shadow_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+                
+            let afternoon_shadow_hours: Vec<Vec<f32>> = results.summary_stats.afternoon_shadow_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+            
+            Ok(AllSummaryData {
+                total_shadow_hours,
+                avg_shadow_percentage,
+                max_consecutive_shadow,
+                morning_shadow_hours,
+                afternoon_shadow_hours,
+                bounds: clipped_info.bounds.clone(),
+                transform: clipped_info.transform.clone(),
+            })
+        }
+        _ => Err("No results or clipped raster information available".to_string()),
     }
 }
 
@@ -344,13 +475,16 @@ fn main() {
             current_config: Mutex::new(None),
             current_results: Mutex::new(None),
             raster_bounds: Mutex::new(None),
+            clipped_raster_info: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             load_rasters,
             calculate_shadows,
             export_results,
             get_shadow_at_time,
-            get_timestamps
+            get_timestamps,
+            get_average_shadow_raster,
+            get_all_summary_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
