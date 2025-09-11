@@ -18,35 +18,51 @@ impl SunCalculator {
         }
     }
 
-    pub fn calculate_sunrise_sunset(&self, date: &DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    pub fn calculate_sunrise_sunset(
+        &self,
+        date: &DateTime<Utc>,
+    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
         // Use civil twilight threshold (-0.833° for practical sunrise/sunset)
         let target_elevation = -0.833;
-        
+
         // Start from solar noon and search backwards/forwards for zero crossing
         let _noon = date.date_naive().and_hms_opt(12, 0, 0)?.and_utc();
-        
+
         let sunrise = self.find_solar_event(date, target_elevation, false)?;
         let sunset = self.find_solar_event(date, target_elevation, true)?;
-        
+
         Some((sunrise, sunset))
     }
 
-    fn find_solar_event(&self, date: &DateTime<Utc>, target_elevation: f64, is_sunset: bool) -> Option<DateTime<Utc>> {
+    fn find_solar_event(
+        &self,
+        date: &DateTime<Utc>,
+        target_elevation: f64,
+        is_sunset: bool,
+    ) -> Option<DateTime<Utc>> {
         let base_date = date.date_naive().and_hms_opt(12, 0, 0)?.and_utc();
-        
+
         // Search range: 6 hours before/after solar noon
-        let search_start = if is_sunset { base_date } else { base_date - chrono::Duration::hours(6) };
-        let search_end = if is_sunset { base_date + chrono::Duration::hours(6) } else { base_date };
-        
+        let search_start = if is_sunset {
+            base_date
+        } else {
+            base_date - chrono::Duration::hours(6)
+        };
+        let search_end = if is_sunset {
+            base_date + chrono::Duration::hours(6)
+        } else {
+            base_date
+        };
+
         // Binary search for elevation crossing
         let mut low = search_start;
         let mut high = search_end;
         let tolerance = chrono::Duration::minutes(1);
-        
+
         while high - low > tolerance {
             let mid = low + (high - low) / 2;
             let (_, elevation) = self.calculate_position(&mid);
-            
+
             if is_sunset {
                 if elevation > target_elevation {
                     low = mid;
@@ -61,7 +77,7 @@ impl SunCalculator {
                 }
             }
         }
-        
+
         Some(low + (high - low) / 2)
     }
 
@@ -69,15 +85,18 @@ impl SunCalculator {
         let base_date = date.date_naive().and_hms_opt(12, 0, 0).unwrap().and_utc();
         let julian_day = self.julian_day(&base_date);
         let equation_of_time = self.equation_of_time(julian_day);
-        
+
         // Solar noon occurs when hour angle = 0, so solar time = 12
         // Local time = solar time - equation of time - longitude correction
         let solar_noon_hours = 12.0 - equation_of_time / 60.0 - self.longitude / 15.0;
-        
+
         let hours = solar_noon_hours.floor() as u32;
         let minutes = ((solar_noon_hours - hours as f64) * 60.0) as u32;
-        
-        date.date_naive().and_hms_opt(hours, minutes, 0).unwrap_or(base_date.naive_utc()).and_utc()
+
+        date.date_naive()
+            .and_hms_opt(hours, minutes, 0)
+            .unwrap_or(base_date.naive_utc())
+            .and_utc()
     }
 
     pub fn get_solar_hours_for_day(&self, date: &DateTime<Utc>) -> f64 {
@@ -86,11 +105,12 @@ impl SunCalculator {
             duration.num_seconds() as f64 / 3600.0 // Convert to hours
         } else {
             // Handle polar conditions
-            let (_, elevation_noon) = self.calculate_position(&date.date_naive().and_hms_opt(12, 0, 0).unwrap().and_utc());
+            let (_, elevation_noon) = self
+                .calculate_position(&date.date_naive().and_hms_opt(12, 0, 0).unwrap().and_utc());
             if elevation_noon > 0.0 {
                 24.0 // Polar summer - sun never sets
             } else {
-                0.0  // Polar winter - sun never rises
+                0.0 // Polar winter - sun never rises
             }
         }
     }

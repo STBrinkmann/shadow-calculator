@@ -253,6 +253,8 @@ struct AllSummaryData {
     morning_shadow_hours: Vec<Vec<f32>>,
     noon_shadow_hours: Vec<Vec<f32>>,
     afternoon_shadow_hours: Vec<Vec<f32>>,
+    daily_solar_hours: Vec<Vec<f32>>,
+    total_available_solar_hours: Vec<Vec<f32>>,
     bounds: RasterBounds,
     transform: Vec<f64>,
 }
@@ -349,6 +351,22 @@ async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryDa
                 .map(|row| row.to_vec())
                 .collect();
 
+            let daily_solar_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .daily_solar_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+
+            let total_available_solar_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .total_available_solar_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+
             Ok(AllSummaryData {
                 total_shadow_hours,
                 avg_shadow_percentage,
@@ -356,6 +374,8 @@ async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryDa
                 morning_shadow_hours,
                 noon_shadow_hours,
                 afternoon_shadow_hours,
+                daily_solar_hours,
+                total_available_solar_hours,
                 bounds: clipped_info.bounds.clone(),
                 transform: clipped_info.transform.clone(),
             })
