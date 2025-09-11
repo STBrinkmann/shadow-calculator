@@ -441,14 +441,17 @@ const LeafletMapView: React.FC<MapViewProps> = ({
                   <div style="text-align: center; padding: 6px; background: #fef3c7; border-radius: 4px;">
                     <div style="font-weight: bold; color: #92400e; font-size: 10px;">MORNING</div>
                     <div style="color: #92400e; font-weight: bold;">${morningPercent.toFixed(1)}%</div>
+                    <div style="color: #92400e; font-size: 10px;">${morningHours?.toFixed(1) || '0.0'}h</div>
                   </div>
                   <div style="text-align: center; padding: 6px; background: #fef5e7; border-radius: 4px;">
                     <div style="font-weight: bold; color: #c2410c; font-size: 10px;">NOON</div>
                     <div style="color: #c2410c; font-weight: bold;">${noonPercent.toFixed(1)}%</div>
+                    <div style="color: #c2410c; font-size: 10px;">${noonHours?.toFixed(1) || '0.0'}h</div>
                   </div>
                   <div style="text-align: center; padding: 6px; background: #ecfdf5; border-radius: 4px;">
                     <div style="font-weight: bold; color: #065f46; font-size: 10px;">AFTERNOON</div>
                     <div style="color: #065f46; font-weight: bold;">${afternoonPercent.toFixed(1)}%</div>
+                    <div style="color: #065f46; font-size: 10px;">${afternoonHours?.toFixed(1) || '0.0'}h</div>
                   </div>
                 </div>
                 <div style="margin-top: 6px; font-size: 10px; color: #6b7280; text-align: center;">
