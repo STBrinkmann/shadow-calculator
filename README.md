@@ -50,7 +50,7 @@ brew install gdal pkg-config
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/your-username/shadow-calculator.git
+git clone https://github.com/STBrinkmann/shadow-calculator.git
 cd shadow-calculator
 ```
 
@@ -222,7 +222,7 @@ This project is built with:
 
 For questions or issues:
 
-- [Open an issue](https://github.com/your-username/shadow-calculator/issues) on GitHub
+- [Open an issue](https://github.com/STBrinkmann/shadow-calculator/issues) on GitHub
 - Check existing issues first for similar problems
 - Include sample data and error messages when reporting bugs
 - Describe your environment and steps to reproduce the issue
