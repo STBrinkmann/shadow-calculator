@@ -415,14 +415,82 @@ impl ShadowEngine {
             .unwrap_or_else(|_| (chrono::Utc::now() + chrono::Duration::days(30)).into())
             .with_timezone(&chrono::Utc);
 
-        let mut current = start;
+        // Generate solar-aware timestamps: only during daylight hours for each day
+        let mut current_date = start.date_naive();
+        let end_date = end.date_naive();
 
-        while current <= end {
-            timestamps.push(current);
-            current += chrono::Duration::hours(self.config.hour_interval as i64);
+        let interval_duration =
+            chrono::Duration::minutes((self.config.hour_interval * 60.0) as i64);
+
+        while current_date <= end_date {
+            let current_datetime = current_date.and_hms_opt(12, 0, 0).unwrap().and_utc();
+
+            // Get sunrise and sunset for this day using the AOI center coordinates
+            let aoi_center = self.get_aoi_center();
+            let sun_calc = crate::sun_position::SunCalculator::new(
+                aoi_center.1, // latitude
+                aoi_center.0, // longitude
+                self.config.angle_precision,
+            );
+
+            if let Some((sunrise, sunset)) = sun_calc.calculate_sunrise_sunset(&current_datetime) {
+                // Generate timestamps at specified intervals between sunrise and sunset
+                let mut daylight_time = sunrise;
+
+                // Ensure we start within the requested date range
+                if daylight_time < start {
+                    daylight_time = start;
+                }
+
+                while daylight_time <= sunset && daylight_time <= end {
+                    timestamps.push(daylight_time);
+                    daylight_time += interval_duration;
+                }
+            } else {
+                // Handle polar conditions - if solar noon has positive elevation, include some timestamps
+                let mut sun_calc_mut = sun_calc;
+                let (_, noon_elevation) = sun_calc_mut.get_position(&current_datetime);
+                if noon_elevation > 0.0 {
+                    // Polar summer: sun never sets, use traditional approach for this day
+                    let day_start = current_date
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap()
+                        .and_utc()
+                        .max(start);
+                    let day_end = current_date
+                        .and_hms_opt(23, 59, 59)
+                        .unwrap()
+                        .and_utc()
+                        .min(end);
+
+                    let mut day_time = day_start;
+                    while day_time <= day_end {
+                        timestamps.push(day_time);
+                        day_time += interval_duration;
+                    }
+                }
+                // Polar winter: sun never rises, skip this day entirely
+            }
+
+            current_date += chrono::Duration::days(1);
         }
 
         timestamps
+    }
+
+    fn get_aoi_center(&self) -> (f64, f64) {
+        if let Ok(polygon) = self.config.to_polygon() {
+            let coords: Vec<_> = polygon.exterior().coords().collect();
+            if !coords.is_empty() {
+                let sum_x: f64 = coords.iter().map(|c| c.x).sum();
+                let sum_y: f64 = coords.iter().map(|c| c.y).sum();
+                (sum_x / coords.len() as f64, sum_y / coords.len() as f64)
+            } else {
+                (0.0, 0.0) // Fallback
+            }
+        } else {
+            (0.0, 0.0) // Fallback
+        }
     }
 
     fn calculate_summary_stats(
@@ -430,12 +498,51 @@ impl ShadowEngine {
         shadow_fraction: &Array3<f32>,
         timestamps: &[chrono::DateTime<chrono::Utc>],
     ) -> SummaryStats {
-        let (n_times, n_rows, n_cols) = shadow_fraction.dim();
+        let (_n_times, n_rows, n_cols) = shadow_fraction.dim();
 
+        // Pre-calculate solar data for all days in the analysis period
+        let aoi_center = self.get_aoi_center();
+        let sun_calc = crate::sun_position::SunCalculator::new(
+            aoi_center.1, // latitude
+            aoi_center.0, // longitude
+            self.config.angle_precision,
+        );
+
+        // Group timestamps by date and calculate solar hours per day
+        let mut daily_solar_hours = std::collections::HashMap::new();
+        let mut solar_noon_times = std::collections::HashMap::new();
+
+        for timestamp in timestamps {
+            let date = timestamp.date_naive();
+            if !daily_solar_hours.contains_key(&date) {
+                let solar_hours = sun_calc.get_solar_hours_for_day(timestamp);
+                let solar_noon = sun_calc.calculate_solar_noon(timestamp);
+                daily_solar_hours.insert(date, solar_hours);
+                solar_noon_times.insert(date, solar_noon);
+            }
+        }
+
+        let total_analysis_days = daily_solar_hours.len() as f32;
+        let total_available_solar: f32 = daily_solar_hours.values().map(|&x| x as f32).sum();
+        let avg_daily_solar = if total_analysis_days > 0.0 {
+            total_available_solar / total_analysis_days
+        } else {
+            0.0
+        };
+
+        println!("Solar calculation debug:");
+        println!("  Total analysis days: {}", total_analysis_days);
+        println!("  Total available solar hours: {}", total_available_solar);
+        println!("  Average daily solar hours: {}", avg_daily_solar);
+        println!("  Number of timestamps: {}", timestamps.len());
+
+        // Create arrays for new statistics
         let mut total_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
         let mut morning_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
+        let mut noon_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
         let mut afternoon_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
         let mut max_consecutive = Array2::<f32>::zeros((n_rows, n_cols));
+        let mut solar_efficiency = Array2::<f32>::zeros((n_rows, n_cols));
 
         // Create a vector of all cell coordinates for parallel processing
         let cell_coords: Vec<(usize, usize)> = (0..n_rows)
@@ -443,32 +550,55 @@ impl ShadowEngine {
             .collect();
 
         // Calculate statistics for all cells in parallel
-        let stats_results: Vec<(f32, f32, f32, f32)> = cell_coords
+        let stats_results: Vec<(f32, f32, f32, f32, f32, f32)> = cell_coords
             .par_iter()
             .map(|&(row, col)| {
                 let cell_series = shadow_fraction.slice(s![.., row, col]);
 
-                // Total shadow hours
-                let total = cell_series.sum() * self.config.hour_interval;
+                // Calculate total shadow hours and morning/noon/afternoon split
+                let mut total_shadow_hours_cell = 0.0;
+                let mut morning_shadow_hours_cell = 0.0;
+                let mut noon_shadow_hours_cell = 0.0;
+                let mut afternoon_shadow_hours_cell = 0.0;
 
-                // Morning vs afternoon
-                let mut morning = 0.0;
-                let mut afternoon = 0.0;
+                // Calculate shadow hours for each timestamp (simple approach)
                 for (t_idx, &timestamp) in timestamps.iter().enumerate() {
-                    let hour = timestamp.hour();
-                    let shadow_val = cell_series[t_idx] * self.config.hour_interval;
+                    let shadow_contribution = cell_series[t_idx] * self.config.hour_interval;
+                    total_shadow_hours_cell += shadow_contribution;
 
-                    if hour < 12 {
-                        morning += shadow_val;
+                    // Morning/noon/afternoon classification using solar noon ± 2 hours
+                    let date = timestamp.date_naive();
+                    if let Some(&solar_noon) = solar_noon_times.get(&date) {
+                        let noon_start = solar_noon - chrono::Duration::hours(2);
+                        let noon_end = solar_noon + chrono::Duration::hours(2);
+
+                        if timestamp < noon_start {
+                            morning_shadow_hours_cell += shadow_contribution;
+                        } else if timestamp <= noon_end {
+                            noon_shadow_hours_cell += shadow_contribution;
+                        } else {
+                            afternoon_shadow_hours_cell += shadow_contribution;
+                        }
                     } else {
-                        afternoon += shadow_val;
+                        // Fallback to clock-based classification if solar noon calculation fails
+                        let hour = timestamp.hour();
+                        if hour < 10 {
+                            // Before 10 AM
+                            morning_shadow_hours_cell += shadow_contribution;
+                        } else if hour < 14 {
+                            // 10 AM - 2 PM (noon period)
+                            noon_shadow_hours_cell += shadow_contribution;
+                        } else {
+                            // After 2 PM
+                            afternoon_shadow_hours_cell += shadow_contribution;
+                        }
                     }
                 }
 
-                // Max consecutive shadow hours
+                // Max consecutive shadow hours (using actual time intervals)
                 let mut current_consecutive = 0.0;
                 let mut max_consec = 0.0f32;
-                for &val in cell_series.iter() {
+                for (_t_idx, &val) in cell_series.iter().enumerate() {
                     if val > 0.5 {
                         current_consecutive += self.config.hour_interval;
                         max_consec = max_consec.max(current_consecutive);
@@ -477,29 +607,58 @@ impl ShadowEngine {
                     }
                 }
 
-                (total, morning, afternoon, max_consec)
+                // Solar efficiency: fraction of total available solar hours that are not shadowed (0.0-1.0)
+                let efficiency = if total_available_solar > 0.0 {
+                    ((total_available_solar - total_shadow_hours_cell) / total_available_solar)
+                        .max(0.0)
+                } else {
+                    0.0
+                };
+
+                (
+                    total_shadow_hours_cell,
+                    morning_shadow_hours_cell,
+                    noon_shadow_hours_cell,
+                    afternoon_shadow_hours_cell,
+                    max_consec,
+                    efficiency,
+                )
             })
             .collect();
 
         // Assign results back to arrays
-        for ((row, col), &(total, morning, afternoon, max_consec)) in
+        for ((row, col), &(total, morning, noon, afternoon, max_consec, efficiency)) in
             cell_coords.iter().zip(stats_results.iter())
         {
             total_shadow_hours[[*row, *col]] = total;
             morning_shadow_hours[[*row, *col]] = morning;
+            noon_shadow_hours[[*row, *col]] = noon;
             afternoon_shadow_hours[[*row, *col]] = afternoon;
             max_consecutive[[*row, *col]] = max_consec;
+            solar_efficiency[[*row, *col]] = efficiency;
         }
 
-        let avg_shadow_percentage =
-            &total_shadow_hours / (n_times as f32 * self.config.hour_interval);
+        // Calculate average shadow percentage as fraction (0.0-1.0, not 0-100)
+        // Total measurement time = number of timestamps * hour interval
+        let total_measurement_hours = timestamps.len() as f32 * self.config.hour_interval;
+        println!("  Total measurement hours: {}", total_measurement_hours);
+
+        let avg_shadow_percentage = if total_measurement_hours > 0.0 {
+            &total_shadow_hours / total_measurement_hours
+        } else {
+            Array2::<f32>::zeros((n_rows, n_cols))
+        };
 
         // Convert to Array3 with summary layers
         let mut total_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
         let mut avg_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
         let mut max_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
         let mut morning_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
+        let mut noon_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
         let mut afternoon_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
+        let mut efficiency_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
+        let mut daily_solar_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
+        let mut total_available_3d = Array3::<f32>::zeros((1, n_rows, n_cols));
 
         total_3d
             .slice_mut(s![0, .., ..])
@@ -511,16 +670,28 @@ impl ShadowEngine {
         morning_3d
             .slice_mut(s![0, .., ..])
             .assign(&morning_shadow_hours);
+        noon_3d.slice_mut(s![0, .., ..]).assign(&noon_shadow_hours);
         afternoon_3d
             .slice_mut(s![0, .., ..])
             .assign(&afternoon_shadow_hours);
+        efficiency_3d
+            .slice_mut(s![0, .., ..])
+            .assign(&solar_efficiency);
+        // Each cell gets the average daily solar hours for the analysis period
+        daily_solar_3d.fill(avg_daily_solar);
+        // Each cell gets total available solar hours for the entire analysis period
+        total_available_3d.fill(total_available_solar);
 
         SummaryStats {
             total_shadow_hours: total_3d,
             avg_shadow_percentage: avg_3d,
             max_consecutive_shadow: max_3d,
             morning_shadow_hours: morning_3d,
+            noon_shadow_hours: noon_3d,
             afternoon_shadow_hours: afternoon_3d,
+            solar_efficiency_percentage: efficiency_3d,
+            daily_solar_hours: daily_solar_3d,
+            total_available_solar_hours: total_available_3d,
         }
     }
 }

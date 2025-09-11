@@ -251,7 +251,10 @@ struct AllSummaryData {
     avg_shadow_percentage: Vec<Vec<f32>>,
     max_consecutive_shadow: Vec<Vec<f32>>,
     morning_shadow_hours: Vec<Vec<f32>>,
+    noon_shadow_hours: Vec<Vec<f32>>,
     afternoon_shadow_hours: Vec<Vec<f32>>,
+    daily_solar_hours: Vec<Vec<f32>>,
+    total_available_solar_hours: Vec<Vec<f32>>,
     bounds: RasterBounds,
     transform: Vec<f64>,
 }
@@ -332,9 +335,33 @@ async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryDa
                 .map(|row| row.to_vec())
                 .collect();
 
+            let noon_shadow_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .noon_shadow_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+
             let afternoon_shadow_hours: Vec<Vec<f32>> = results
                 .summary_stats
                 .afternoon_shadow_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+
+            let daily_solar_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .daily_solar_hours
+                .slice(ndarray::s![0, .., ..])
+                .outer_iter()
+                .map(|row| row.to_vec())
+                .collect();
+
+            let total_available_solar_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .total_available_solar_hours
                 .slice(ndarray::s![0, .., ..])
                 .outer_iter()
                 .map(|row| row.to_vec())
@@ -345,7 +372,10 @@ async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryDa
                 avg_shadow_percentage,
                 max_consecutive_shadow,
                 morning_shadow_hours,
+                noon_shadow_hours,
                 afternoon_shadow_hours,
+                daily_solar_hours,
+                total_available_solar_hours,
                 bounds: clipped_info.bounds.clone(),
                 transform: clipped_info.transform.clone(),
             })
@@ -413,7 +443,7 @@ async fn export_results(
                         .map_err(|e| format!("Failed to clip: {}", e))?;
 
                     // Combine summary stats and time series
-                    let n_summary = 5;
+                    let n_summary = 9;
                     let (n_times, n_rows, n_cols) = results.shadow_fraction.dim();
                     let mut combined =
                         ndarray::Array3::<f32>::zeros((n_summary + n_times, n_rows, n_cols));
@@ -446,7 +476,31 @@ async fn export_results(
                     combined.slice_mut(ndarray::s![4, .., ..]).assign(
                         &results
                             .summary_stats
+                            .noon_shadow_hours
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![5, .., ..]).assign(
+                        &results
+                            .summary_stats
                             .afternoon_shadow_hours
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![6, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .solar_efficiency_percentage
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![7, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .daily_solar_hours
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![8, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .total_available_solar_hours
                             .slice(ndarray::s![0, .., ..]),
                     );
 
@@ -458,10 +512,14 @@ async fn export_results(
                     // Create band descriptions for better identification
                     let mut band_descriptions = vec![
                         "Total_Shadow_Hours".to_string(),
-                        "Average_Shadow_Percentage".to_string(),
+                        "Average_Shadow_Fraction_(0-1)".to_string(),
                         "Max_Consecutive_Shadow_Hours".to_string(),
-                        "Morning_Shadow_Hours_(before_noon)".to_string(),
-                        "Afternoon_Shadow_Hours_(after_noon)".to_string(),
+                        "Morning_Shadow_Hours_(before_solar_noon_minus_2h)".to_string(),
+                        "Noon_Shadow_Hours_(solar_noon_±2h)".to_string(),
+                        "Afternoon_Shadow_Hours_(after_solar_noon_plus_2h)".to_string(),
+                        "Solar_Efficiency_Fraction_(0-1)".to_string(),
+                        "Average_Daily_Solar_Hours".to_string(),
+                        "Total_Available_Solar_Hours".to_string(),
                     ];
 
                     // Add timestamp descriptions for each time layer
@@ -564,21 +622,25 @@ async fn validate_results_file(file_path: String) -> Result<ResultsMetadata, Str
     let shape = raster_data.data.shape();
     let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
 
-    // Validate that we have at least 5 summary bands
-    if n_bands < 5 {
+    // Validate that we have at least 9 summary bands
+    if n_bands < 9 {
         return Err(format!(
-            "Results file must have at least 5 bands (summary layers), found {}",
+            "Results file must have at least 9 bands (summary layers), found {}",
             n_bands
         ));
     }
 
-    // Expected summary layers (first 5 bands)
+    // Expected summary layers (first 9 bands)
     let summary_layers = vec![
         "Total Shadow Hours".to_string(),
-        "Average Shadow Percentage".to_string(),
+        "Average Shadow Fraction".to_string(),
         "Max Consecutive Shadow Hours".to_string(),
         "Morning Shadow Hours".to_string(),
+        "Noon Shadow Hours".to_string(),
         "Afternoon Shadow Hours".to_string(),
+        "Solar Efficiency Fraction".to_string(),
+        "Average Daily Solar Hours".to_string(),
+        "Total Available Solar Hours".to_string(),
     ];
 
     // Calculate bounds
@@ -640,23 +702,27 @@ async fn load_results_file(
     let shape = raster_data.data.shape();
     let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
 
-    if n_bands < 5 {
+    if n_bands < 9 {
         return Err("Invalid results file: missing summary layers".to_string());
     }
 
-    // Extract summary stats (first 5 bands)
+    // Extract summary stats (first 9 bands)
     let summary_stats = SummaryStats {
         total_shadow_hours: raster_data.data.slice(ndarray::s![0..1, .., ..]).to_owned(),
         avg_shadow_percentage: raster_data.data.slice(ndarray::s![1..2, .., ..]).to_owned(),
         max_consecutive_shadow: raster_data.data.slice(ndarray::s![2..3, .., ..]).to_owned(),
         morning_shadow_hours: raster_data.data.slice(ndarray::s![3..4, .., ..]).to_owned(),
-        afternoon_shadow_hours: raster_data.data.slice(ndarray::s![4..5, .., ..]).to_owned(),
+        noon_shadow_hours: raster_data.data.slice(ndarray::s![4..5, .., ..]).to_owned(),
+        afternoon_shadow_hours: raster_data.data.slice(ndarray::s![5..6, .., ..]).to_owned(),
+        solar_efficiency_percentage: raster_data.data.slice(ndarray::s![6..7, .., ..]).to_owned(),
+        daily_solar_hours: raster_data.data.slice(ndarray::s![7..8, .., ..]).to_owned(),
+        total_available_solar_hours: raster_data.data.slice(ndarray::s![8..9, .., ..]).to_owned(),
     };
 
-    // Extract time series data (bands 5+)
-    let num_time_bands = n_bands - 5;
+    // Extract time series data (bands 9+)
+    let num_time_bands = n_bands - 9;
     let shadow_fraction = if num_time_bands > 0 {
-        raster_data.data.slice(ndarray::s![5.., .., ..]).to_owned()
+        raster_data.data.slice(ndarray::s![9.., .., ..]).to_owned()
     } else {
         // Create empty time series if no time data
         ndarray::Array3::<f32>::zeros((0, n_rows, n_cols))

@@ -35,7 +35,10 @@ interface AllSummaryData {
   avg_shadow_percentage: number[][];
   max_consecutive_shadow: number[][];
   morning_shadow_hours: number[][];
+  noon_shadow_hours: number[][];
   afternoon_shadow_hours: number[][];
+  daily_solar_hours: number[][];
+  total_available_solar_hours: number[][];
   bounds: RasterBounds;
   transform: number[];
 }

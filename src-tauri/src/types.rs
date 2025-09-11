@@ -85,7 +85,11 @@ pub struct SummaryStats {
     pub avg_shadow_percentage: Array3<f32>,
     pub max_consecutive_shadow: Array3<f32>,
     pub morning_shadow_hours: Array3<f32>,
+    pub noon_shadow_hours: Array3<f32>,
     pub afternoon_shadow_hours: Array3<f32>,
+    pub solar_efficiency_percentage: Array3<f32>,
+    pub daily_solar_hours: Array3<f32>,
+    pub total_available_solar_hours: Array3<f32>,
 }
 
 #[derive(Debug, thiserror::Error)]
