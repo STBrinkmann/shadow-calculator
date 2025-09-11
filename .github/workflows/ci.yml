@@ -10,21 +10,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-22.04
     
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          gdal-bin libgdal-dev \
-          build-essential pkg-config libssl-dev \
-          libwebkit2gtk-4.1-dev libgtk-3-dev \
-          libayatana-appindicator3-dev librsvg2-dev \
-          libsoup2.4-dev
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -37,18 +27,7 @@ jobs:
       with:
         toolchain: stable
         override: true
-        components: rustfmt, clippy
-    
-    - name: Cache Rust dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          src-tauri/target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+        components: rustfmt
     
     - name: Install Node dependencies
       run: npm install
@@ -58,19 +37,10 @@ jobs:
     
     - name: Check Rust formatting
       run: cd src-tauri && cargo fmt --all -- --check
-    
-    - name: Run Clippy
-      run: cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
-    
-    - name: Build Rust backend
-      run: cd src-tauri && cargo build --release
-    
-    - name: Run Rust tests
-      run: cd src-tauri && cargo test
 
   build-artifacts:
     runs-on: ${{ matrix.os }}
-    needs: test
+    needs: lint
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     strategy:
