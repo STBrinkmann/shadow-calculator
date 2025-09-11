@@ -35,7 +35,7 @@ sudo apt-get install -y gdal-bin libgdal-dev \
     build-essential pkg-config libssl-dev \
     libwebkit2gtk-4.1-dev libgtk-3-dev \
     libayatana-appindicator3-dev librsvg2-dev \
-    libsoup2.4-dev libjavascriptcoregtk-4.0-dev
+    libsoup2.4-dev
 ```
 
 **macOS**:
