@@ -37,6 +37,8 @@ interface AllSummaryData {
   morning_shadow_hours: number[][];
   noon_shadow_hours: number[][];
   afternoon_shadow_hours: number[][];
+  daily_solar_hours: number[][];
+  total_available_solar_hours: number[][];
   bounds: RasterBounds;
   transform: number[];
 }

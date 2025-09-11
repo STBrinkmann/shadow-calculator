@@ -32,6 +32,8 @@ interface AllSummaryData {
   morning_shadow_hours: number[][];
   noon_shadow_hours: number[][];
   afternoon_shadow_hours: number[][];
+  daily_solar_hours: number[][];
+  total_available_solar_hours: number[][];
   bounds: RasterBounds;
   transform: number[];
 }
@@ -405,12 +407,31 @@ const LeafletMapView: React.FC<MapViewProps> = ({
         const morningHours = getRasterValueAtLatLng(e.latlng, allSummaryData.morning_shadow_hours);
         const noonHours = getRasterValueAtLatLng(e.latlng, allSummaryData.noon_shadow_hours);
         const afternoonHours = getRasterValueAtLatLng(e.latlng, allSummaryData.afternoon_shadow_hours);
+        const dailySolarHours = getRasterValueAtLatLng(e.latlng, allSummaryData.daily_solar_hours);
+        const totalAvailableSolar = getRasterValueAtLatLng(e.latlng, allSummaryData.total_available_solar_hours);
 
         if (shadowValue !== null) {
-          // Calculate percentages as portion of total shadow hours
-          const morningPercent = (totalHours && totalHours > 0 && morningHours) ? (morningHours / totalHours * 100) : 0;
-          const noonPercent = (totalHours && totalHours > 0 && noonHours) ? (noonHours / totalHours * 100) : 0;
-          const afternoonPercent = (totalHours && totalHours > 0 && afternoonHours) ? (afternoonHours / totalHours * 100) : 0;
+          // Calculate number of analysis days: total_available_solar / daily_solar_hours
+          const analysisDays = (totalAvailableSolar && dailySolarHours && dailySolarHours > 0) ? 
+            (totalAvailableSolar / dailySolarHours) : 1;
+          
+          // Calculate per-day values
+          const totalHoursPerDay = totalHours ? (totalHours / analysisDays) : 0;
+          const maxConsecutivePerDay = maxConsecutive || 0; // This is already per occurrence
+          const morningHoursPerDay = morningHours ? (morningHours / analysisDays) : 0;
+          const noonHoursPerDay = noonHours ? (noonHours / analysisDays) : 0;
+          const afternoonHoursPerDay = afternoonHours ? (afternoonHours / analysisDays) : 0;
+          
+          // Calculate solar day percentages (shadow hours / solar day hours * 100)
+          const totalSolarDayPercent = (dailySolarHours && dailySolarHours > 0) ? 
+            (totalHoursPerDay / dailySolarHours * 100) : 0;
+          const maxConsecutiveSolarPercent = (dailySolarHours && dailySolarHours > 0) ? 
+            (maxConsecutivePerDay / dailySolarHours * 100) : 0;
+          
+          // Calculate percentages as portion of total shadow hours (for distribution)
+          const morningPercent = (totalHoursPerDay && totalHoursPerDay > 0 && morningHoursPerDay) ? (morningHoursPerDay / totalHoursPerDay * 100) : 0;
+          const noonPercent = (totalHoursPerDay && totalHoursPerDay > 0 && noonHoursPerDay) ? (noonHoursPerDay / totalHoursPerDay * 100) : 0;
+          const afternoonPercent = (totalHoursPerDay && totalHoursPerDay > 0 && afternoonHoursPerDay) ? (afternoonHoursPerDay / totalHoursPerDay * 100) : 0;
 
           const popupContent = `
             <div style="font-family: sans-serif; min-width: 240px;">
@@ -423,12 +444,12 @@ const LeafletMapView: React.FC<MapViewProps> = ({
                   <div style="font-size: 16px; color: #1f2937; font-weight: bold;">${Math.round(shadowValue * 100)}%</div>
                 </div>
                 <div style="background: #fef3c7; padding: 8px; border-radius: 4px;">
-                  <div style="font-weight: bold; color: #92400e; font-size: 11px;">TOTAL HOURS</div>
-                  <div style="font-size: 16px; color: #92400e; font-weight: bold;">${totalHours?.toFixed(1) || 'N/A'}h</div>
+                  <div style="font-weight: bold; color: #92400e; font-size: 11px;">TOTAL PER DAY</div>
+                  <div style="font-size: 14px; color: #92400e; font-weight: bold;">${totalHoursPerDay.toFixed(1)}h (${totalSolarDayPercent.toFixed(0)}%)</div>
                 </div>
                 <div style="background: #fee2e2; padding: 8px; border-radius: 4px;">
                   <div style="font-weight: bold; color: #991b1b; font-size: 11px;">MAX CONSECUTIVE</div>
-                  <div style="font-size: 16px; color: #991b1b; font-weight: bold;">${maxConsecutive?.toFixed(1) || 'N/A'}h</div>
+                  <div style="font-size: 14px; color: #991b1b; font-weight: bold;">${maxConsecutivePerDay.toFixed(1)}h (${maxConsecutiveSolarPercent.toFixed(0)}%)</div>
                 </div>
                 <div style="background: #ddd6fe; padding: 8px; border-radius: 4px;">
                   <div style="font-weight: bold; color: #5b21b6; font-size: 11px;">SOLAR EFFICIENCY</div>
@@ -441,17 +462,17 @@ const LeafletMapView: React.FC<MapViewProps> = ({
                   <div style="text-align: center; padding: 6px; background: #fef3c7; border-radius: 4px;">
                     <div style="font-weight: bold; color: #92400e; font-size: 10px;">MORNING</div>
                     <div style="color: #92400e; font-weight: bold;">${morningPercent.toFixed(1)}%</div>
-                    <div style="color: #92400e; font-size: 10px;">${morningHours?.toFixed(1) || '0.0'}h</div>
+                    <div style="color: #92400e; font-size: 10px;">${morningHoursPerDay.toFixed(1)}h/day</div>
                   </div>
                   <div style="text-align: center; padding: 6px; background: #fef5e7; border-radius: 4px;">
                     <div style="font-weight: bold; color: #c2410c; font-size: 10px;">NOON</div>
                     <div style="color: #c2410c; font-weight: bold;">${noonPercent.toFixed(1)}%</div>
-                    <div style="color: #c2410c; font-size: 10px;">${noonHours?.toFixed(1) || '0.0'}h</div>
+                    <div style="color: #c2410c; font-size: 10px;">${noonHoursPerDay.toFixed(1)}h/day</div>
                   </div>
                   <div style="text-align: center; padding: 6px; background: #ecfdf5; border-radius: 4px;">
                     <div style="font-weight: bold; color: #065f46; font-size: 10px;">AFTERNOON</div>
                     <div style="color: #065f46; font-weight: bold;">${afternoonPercent.toFixed(1)}%</div>
-                    <div style="color: #065f46; font-size: 10px;">${afternoonHours?.toFixed(1) || '0.0'}h</div>
+                    <div style="color: #065f46; font-size: 10px;">${afternoonHoursPerDay.toFixed(1)}h/day</div>
                   </div>
                 </div>
                 <div style="margin-top: 6px; font-size: 10px; color: #6b7280; text-align: center;">
