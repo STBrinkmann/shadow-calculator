@@ -713,29 +713,32 @@ async fn load_results_file(
 #[tauri::command]
 async fn debug_tiff_structure(file_path: String) -> Result<String, String> {
     let path = Path::new(&file_path);
-    
+
     // Try to read the raster file with all bands
     let raster_data = RasterIO::read_multiband_raster(path)
         .map_err(|e| format!("Failed to read raster file: {}", e))?;
-    
+
     let shape = raster_data.data.shape();
     let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
-    
+
     let mut debug_info = format!(
         "File: {}\nShape: {:?}\nBands: {}, Rows: {}, Cols: {}\n",
         file_path, shape, n_bands, n_rows, n_cols
     );
-    
+
     // Try to get band descriptions if available
     debug_info.push_str(&format!("Transform: {:?}\n", raster_data.transform));
     debug_info.push_str(&format!("Projection: {:?}\n", raster_data.projection));
-    
+
     // Sample some values from the first few bands
     for band in 0..(n_bands.min(10)) {
-        let band_slice = raster_data.data.slice(ndarray::s![band, 0..5.min(n_rows), 0..5.min(n_cols)]);
+        let band_slice =
+            raster_data
+                .data
+                .slice(ndarray::s![band, 0..5.min(n_rows), 0..5.min(n_cols)]);
         debug_info.push_str(&format!("Band {} sample values:\n{:?}\n", band, band_slice));
     }
-    
+
     Ok(debug_info)
 }
 

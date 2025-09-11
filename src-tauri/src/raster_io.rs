@@ -60,7 +60,7 @@ impl RasterIO {
         for band_idx in 0..n_bands {
             let band = dataset.rasterband((band_idx + 1) as isize)?;
             let mut band_data = vec![0f32; width * height];
-            
+
             band.read_into_slice(
                 (0, 0),
                 (width, height),
@@ -69,9 +69,14 @@ impl RasterIO {
                 Some(ResampleAlg::NearestNeighbour),
             )?;
 
-            let band_array = Array2::from_shape_vec((height, width), band_data)
-                .map_err(|e| ShadowError::Config(format!("Failed to create array for band {}: {}", band_idx + 1, e)))?;
-            
+            let band_array = Array2::from_shape_vec((height, width), band_data).map_err(|e| {
+                ShadowError::Config(format!(
+                    "Failed to create array for band {}: {}",
+                    band_idx + 1,
+                    e
+                ))
+            })?;
+
             all_data.slice_mut(s![band_idx, .., ..]).assign(&band_array);
         }
 
