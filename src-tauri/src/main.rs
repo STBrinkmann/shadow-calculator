@@ -475,12 +475,12 @@ async fn export_results(
 
                     // Create band descriptions for better identification
                     let mut band_descriptions = vec![
-                        "Total_Shadow_Hours_(solar_weighted)".to_string(),
-                        "Average_Shadow_Percentage_(of_solar_hours)".to_string(),
+                        "Total_Shadow_Hours".to_string(),
+                        "Average_Shadow_Fraction_(0-1)".to_string(),
                         "Max_Consecutive_Shadow_Hours".to_string(),
                         "Morning_Shadow_Hours_(before_solar_noon)".to_string(),
                         "Afternoon_Shadow_Hours_(after_solar_noon)".to_string(),
-                        "Solar_Efficiency_Percentage".to_string(),
+                        "Solar_Efficiency_Fraction_(0-1)".to_string(),
                         "Average_Daily_Solar_Hours".to_string(),
                         "Total_Available_Solar_Hours".to_string(),
                     ];
@@ -596,11 +596,11 @@ async fn validate_results_file(file_path: String) -> Result<ResultsMetadata, Str
     // Expected summary layers (first 8 bands)
     let summary_layers = vec![
         "Total Shadow Hours".to_string(),
-        "Average Shadow Percentage".to_string(),
+        "Average Shadow Fraction".to_string(),
         "Max Consecutive Shadow Hours".to_string(),
         "Morning Shadow Hours".to_string(),
         "Afternoon Shadow Hours".to_string(),
-        "Solar Efficiency Percentage".to_string(),
+        "Solar Efficiency Fraction".to_string(),
         "Average Daily Solar Hours".to_string(),
         "Total Available Solar Hours".to_string(),
     ];

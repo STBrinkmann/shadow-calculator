@@ -581,9 +581,9 @@ impl ShadowEngine {
                     }
                 }
 
-                // Solar efficiency: percentage of total available solar hours that are not shadowed
+                // Solar efficiency: fraction of total available solar hours that are not shadowed (0.0-1.0)
                 let efficiency = if total_available_solar > 0.0 {
-                    ((total_available_solar - total_shadow_hours_cell) / total_available_solar * 100.0).max(0.0)
+                    ((total_available_solar - total_shadow_hours_cell) / total_available_solar).max(0.0)
                 } else {
                     0.0
                 };
@@ -603,13 +603,13 @@ impl ShadowEngine {
             solar_efficiency[[*row, *col]] = efficiency;
         }
 
-        // Calculate average shadow percentage: shadow hours / total measurement period * 100
-        // Total measurement time = number of timestamps * hour interval
+        // Calculate average shadow percentage as fraction (0.0-1.0, not 0-100)
+        // Total measurement time = number of timestamps * hour interval  
         let total_measurement_hours = timestamps.len() as f32 * self.config.hour_interval;
         println!("  Total measurement hours: {}", total_measurement_hours);
         
         let avg_shadow_percentage = if total_measurement_hours > 0.0 {
-            &total_shadow_hours / total_measurement_hours * 100.0
+            &total_shadow_hours / total_measurement_hours
         } else {
             Array2::<f32>::zeros((n_rows, n_cols))
         };
