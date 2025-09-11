@@ -38,6 +38,56 @@ impl RasterIO {
         })
     }
 
+    pub fn read_multiband_raster(path: &Path) -> Result<RasterData, ShadowError> {
+        let dataset = Dataset::open(path)?;
+        let transform = dataset.geo_transform()?;
+        let projection = dataset.projection();
+
+        let n_bands = dataset.raster_count() as usize;
+        if n_bands == 0 {
+            return Err(ShadowError::Config("No bands found in raster".to_string()));
+        }
+
+        // Get dimensions from first band
+        let band = dataset.rasterband(1)?;
+        let no_data_value = band.no_data_value();
+        let (width, height) = band.size();
+
+        // Create 3D array to hold all bands
+        let mut all_data = Array3::<f32>::zeros((n_bands, height, width));
+
+        // Read each band
+        for band_idx in 0..n_bands {
+            let band = dataset.rasterband((band_idx + 1) as isize)?;
+            let mut band_data = vec![0f32; width * height];
+
+            band.read_into_slice(
+                (0, 0),
+                (width, height),
+                (width, height),
+                &mut band_data,
+                Some(ResampleAlg::NearestNeighbour),
+            )?;
+
+            let band_array = Array2::from_shape_vec((height, width), band_data).map_err(|e| {
+                ShadowError::Config(format!(
+                    "Failed to create array for band {}: {}",
+                    band_idx + 1,
+                    e
+                ))
+            })?;
+
+            all_data.slice_mut(s![band_idx, .., ..]).assign(&band_array);
+        }
+
+        Ok(RasterData {
+            data: all_data,
+            transform,
+            projection,
+            no_data_value: no_data_value.map(|v| v as f32),
+        })
+    }
+
     pub fn clip_to_aoi(
         raster: &RasterData,
         aoi: &Polygon<f64>,

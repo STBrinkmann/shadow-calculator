@@ -535,6 +535,213 @@ struct CpuInfo {
     logical_cores: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ResultsMetadata {
+    start_date: String,
+    end_date: String,
+    hour_interval: f64,
+    total_timestamps: usize,
+    summary_layers: Vec<String>,
+    bounds: RasterBounds,
+}
+
+#[tauri::command]
+async fn validate_results_file(file_path: String) -> Result<ResultsMetadata, String> {
+    let path = Path::new(&file_path);
+
+    // Check file extension
+    if !path
+        .extension()
+        .map_or(false, |ext| ext == "tif" || ext == "tiff")
+    {
+        return Err("File must be a .tif or .tiff file".to_string());
+    }
+
+    // Try to read the raster file with all bands
+    let raster_data = RasterIO::read_multiband_raster(path)
+        .map_err(|e| format!("Failed to read raster file: {}", e))?;
+
+    let shape = raster_data.data.shape();
+    let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
+
+    // Validate that we have at least 5 summary bands
+    if n_bands < 5 {
+        return Err(format!(
+            "Results file must have at least 5 bands (summary layers), found {}",
+            n_bands
+        ));
+    }
+
+    // Expected summary layers (first 5 bands)
+    let summary_layers = vec![
+        "Total Shadow Hours".to_string(),
+        "Average Shadow Percentage".to_string(),
+        "Max Consecutive Shadow Hours".to_string(),
+        "Morning Shadow Hours".to_string(),
+        "Afternoon Shadow Hours".to_string(),
+    ];
+
+    // Calculate bounds
+    let transform = &raster_data.transform;
+    let width = n_cols;
+    let height = n_rows;
+
+    let min_lon = transform[0];
+    let max_lon = transform[0] + (width as f64 * transform[1]);
+    let max_lat = transform[3];
+    let min_lat = transform[3] + (height as f64 * transform[5]);
+
+    let bounds = RasterBounds {
+        min_lon,
+        max_lon,
+        min_lat: min_lat.min(max_lat),
+        max_lat: max_lat.max(min_lat),
+    };
+
+    // Try to extract metadata from band descriptions or timestamps
+    // For now, we'll estimate based on the number of bands
+    let num_time_bands = n_bands - 5;
+    let estimated_hour_interval = if num_time_bands > 0 {
+        // Assume a common pattern - if we have many bands, likely hourly data
+        if num_time_bands > 100 {
+            1.0
+        } else {
+            6.0
+        }
+    } else {
+        1.0
+    };
+
+    // Create estimated dates (this will be improved later when we can read band descriptions)
+    let start_date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let end_date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    Ok(ResultsMetadata {
+        start_date,
+        end_date,
+        hour_interval: estimated_hour_interval,
+        total_timestamps: num_time_bands,
+        summary_layers,
+        bounds,
+    })
+}
+
+#[tauri::command]
+async fn load_results_file(
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let path = Path::new(&file_path);
+
+    // Read the results file with all bands
+    let raster_data = RasterIO::read_multiband_raster(path)
+        .map_err(|e| format!("Failed to read results file: {}", e))?;
+
+    let shape = raster_data.data.shape();
+    let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
+
+    if n_bands < 5 {
+        return Err("Invalid results file: missing summary layers".to_string());
+    }
+
+    // Extract summary stats (first 5 bands)
+    let summary_stats = SummaryStats {
+        total_shadow_hours: raster_data.data.slice(ndarray::s![0..1, .., ..]).to_owned(),
+        avg_shadow_percentage: raster_data.data.slice(ndarray::s![1..2, .., ..]).to_owned(),
+        max_consecutive_shadow: raster_data.data.slice(ndarray::s![2..3, .., ..]).to_owned(),
+        morning_shadow_hours: raster_data.data.slice(ndarray::s![3..4, .., ..]).to_owned(),
+        afternoon_shadow_hours: raster_data.data.slice(ndarray::s![4..5, .., ..]).to_owned(),
+    };
+
+    // Extract time series data (bands 5+)
+    let num_time_bands = n_bands - 5;
+    let shadow_fraction = if num_time_bands > 0 {
+        raster_data.data.slice(ndarray::s![5.., .., ..]).to_owned()
+    } else {
+        // Create empty time series if no time data
+        ndarray::Array3::<f32>::zeros((0, n_rows, n_cols))
+    };
+
+    // Generate estimated timestamps (this could be improved by reading band descriptions)
+    let timestamps: Vec<chrono::DateTime<chrono::Utc>> = (0..num_time_bands)
+        .map(|i| chrono::Utc::now() + chrono::Duration::hours(i as i64))
+        .collect();
+
+    // Create shadow results
+    let results = ShadowResult {
+        shadow_fraction,
+        timestamps,
+        summary_stats,
+    };
+
+    // Calculate bounds from transform
+    let transform = &raster_data.transform;
+    let min_lon = transform[0];
+    let max_lon = transform[0] + (n_cols as f64 * transform[1]);
+    let max_lat = transform[3];
+    let min_lat = transform[3] + (n_rows as f64 * transform[5]);
+
+    let bounds = RasterBounds {
+        min_lon,
+        max_lon,
+        min_lat: min_lat.min(max_lat),
+        max_lat: max_lat.max(min_lat),
+    };
+
+    // Store results and metadata in state
+    let clipped_info = ClippedRasterInfo {
+        bounds: bounds.clone(),
+        transform: raster_data.transform.to_vec(),
+        dimensions: (n_rows, n_cols),
+    };
+
+    let mut results_guard = state.current_results.lock().unwrap();
+    *results_guard = Some(results);
+
+    let mut clipped_info_guard = state.clipped_raster_info.lock().unwrap();
+    *clipped_info_guard = Some(clipped_info);
+
+    let mut bounds_guard = state.raster_bounds.lock().unwrap();
+    *bounds_guard = Some(bounds);
+
+    Ok(format!(
+        "Loaded results with {} summary layers and {} timestamps",
+        5, num_time_bands
+    ))
+}
+
+#[tauri::command]
+async fn debug_tiff_structure(file_path: String) -> Result<String, String> {
+    let path = Path::new(&file_path);
+
+    // Try to read the raster file with all bands
+    let raster_data = RasterIO::read_multiband_raster(path)
+        .map_err(|e| format!("Failed to read raster file: {}", e))?;
+
+    let shape = raster_data.data.shape();
+    let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
+
+    let mut debug_info = format!(
+        "File: {}\nShape: {:?}\nBands: {}, Rows: {}, Cols: {}\n",
+        file_path, shape, n_bands, n_rows, n_cols
+    );
+
+    // Try to get band descriptions if available
+    debug_info.push_str(&format!("Transform: {:?}\n", raster_data.transform));
+    debug_info.push_str(&format!("Projection: {:?}\n", raster_data.projection));
+
+    // Sample some values from the first few bands
+    for band in 0..(n_bands.min(10)) {
+        let band_slice =
+            raster_data
+                .data
+                .slice(ndarray::s![band, 0..5.min(n_rows), 0..5.min(n_cols)]);
+        debug_info.push_str(&format!("Band {} sample values:\n{:?}\n", band, band_slice));
+    }
+
+    Ok(debug_info)
+}
+
 #[tauri::command]
 async fn get_cpu_info() -> Result<CpuInfo, String> {
     let total_cores = num_cpus::get();
@@ -562,7 +769,10 @@ fn main() {
             get_timestamps,
             get_average_shadow_raster,
             get_all_summary_data,
-            get_cpu_info
+            get_cpu_info,
+            validate_results_file,
+            load_results_file,
+            debug_tiff_structure
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -23,3 +23,19 @@ export interface CpuInfo {
   total_cores: number;
   logical_cores: number;
 }
+
+export interface ResultsMetadata {
+  start_date: string;
+  end_date: string;
+  hour_interval: number;
+  total_timestamps: number;
+  summary_layers: string[];
+  bounds: {
+    min_lon: number;
+    max_lon: number;
+    min_lat: number;
+    max_lat: number;
+  };
+}
+
+export type UploadMode = 'calculate' | 'upload';
