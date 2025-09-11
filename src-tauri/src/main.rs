@@ -539,7 +539,7 @@ struct CpuInfo {
 async fn get_cpu_info() -> Result<CpuInfo, String> {
     let total_cores = num_cpus::get();
     let logical_cores = num_cpus::get(); // In most cases, this is the same as total cores
-    
+
     Ok(CpuInfo {
         total_cores,
         logical_cores,

@@ -1,9 +1,9 @@
 use crate::sun_position::SunCalculator;
 use crate::types::*;
-use ndarray::{s, Array2, Array3};
-use rayon::prelude::*;
 use chrono::Timelike;
 use indicatif::{ProgressBar, ProgressStyle};
+use ndarray::{s, Array2, Array3};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
@@ -69,10 +69,10 @@ impl ShadowEngine {
         // Configure Rayon thread pool with specified CPU cores
         let cpu_cores = config.get_cpu_cores();
         println!("Setting up Rayon thread pool with {} cores", cpu_cores);
-        
+
         if let Err(e) = rayon::ThreadPoolBuilder::new()
             .num_threads(cpu_cores)
-            .build_global() 
+            .build_global()
         {
             eprintln!("Warning: Failed to configure Rayon thread pool: {}", e);
             println!("Using default thread pool configuration");
@@ -482,8 +482,9 @@ impl ShadowEngine {
             .collect();
 
         // Assign results back to arrays
-        for ((row, col), &(total, morning, afternoon, max_consec)) in 
-            cell_coords.iter().zip(stats_results.iter()) {
+        for ((row, col), &(total, morning, afternoon, max_consec)) in
+            cell_coords.iter().zip(stats_results.iter())
+        {
             total_shadow_hours[[*row, *col]] = total;
             morning_shadow_hours[[*row, *col]] = morning;
             afternoon_shadow_hours[[*row, *col]] = afternoon;
