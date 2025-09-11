@@ -47,7 +47,8 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config: _co
           value={startDate}
           onChange={(e) => setStartDate(e.target.value)}
           disabled={disabled}
-          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-3 py-2 bg-gray-700 text-white rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ color: 'white', colorScheme: 'dark' }}
         />
       </div>
 
@@ -61,7 +62,8 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config: _co
           min={startDate}
           onChange={(e) => setEndDate(e.target.value)}
           disabled={disabled}
-          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-3 py-2 bg-gray-700 text-white rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ color: 'white', colorScheme: 'dark' }}
         />
       </div>
 
@@ -74,15 +76,16 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config: _co
           value={hourInterval}
           onChange={(e) => setHourInterval(Number(e.target.value))}
           disabled={disabled}
-          className="w-full px-3 py-2 bg-gray-700 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-3 py-2 bg-gray-700 text-white rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ color: 'white' }}
         >
-          <option value={0.5}>30 minutes</option>
-          <option value={1}>1 hour</option>
-          <option value={2}>2 hours</option>
-          <option value={3}>3 hours</option>
-          <option value={6}>6 hours</option>
-          <option value={12}>12 hours</option>
-          <option value={24}>24 hours</option>
+          <option value={0.5} style={{ color: 'black', backgroundColor: 'white' }}>30 minutes</option>
+          <option value={1} style={{ color: 'black', backgroundColor: 'white' }}>1 hour</option>
+          <option value={2} style={{ color: 'black', backgroundColor: 'white' }}>2 hours</option>
+          <option value={3} style={{ color: 'black', backgroundColor: 'white' }}>3 hours</option>
+          <option value={6} style={{ color: 'black', backgroundColor: 'white' }}>6 hours</option>
+          <option value={12} style={{ color: 'black', backgroundColor: 'white' }}>12 hours</option>
+          <option value={24} style={{ color: 'black', backgroundColor: 'white' }}>24 hours</option>
         </select>
       </div>
 
