@@ -210,20 +210,49 @@ function App() {
       )}
       
       <div className="flex-1 flex overflow-hidden">
-        <aside className={`w-80 bg-gray-800 p-4 overflow-y-auto border-r border-gray-700 ${isCalculating ? 'pointer-events-none opacity-75' : ''}`}>
-          <FileUpload onFilesSelected={handleFilesSelected} />
+        <aside className={`w-80 bg-gray-800 overflow-y-auto border-r border-gray-700 ${isCalculating ? 'pointer-events-none opacity-75' : ''}`}>
+          {/* Header Section */}
+          <div className="p-4 border-b border-gray-700">
+            <h2 className="text-lg font-semibold text-gray-200 mb-2">Shadow Analysis Tools</h2>
+            <p className="text-xs text-gray-400">Advanced terrain shadow modeling and analysis</p>
+          </div>
           
-          {rasterBounds && (
-            <div className="mt-4 p-3 bg-blue-800 bg-opacity-20 rounded-md border border-blue-600">
-              <p className="text-xs text-blue-300">
-                <strong>Raster extent:</strong><br />
-                Lon: {rasterBounds.min_lon.toFixed(4)}° to {rasterBounds.max_lon.toFixed(4)}°<br />
-                Lat: {rasterBounds.min_lat.toFixed(4)}° to {rasterBounds.max_lat.toFixed(4)}°
-              </p>
+          {/* Data Input Section */}
+          <div className="p-4 border-b border-gray-700">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+                Data Input
+              </h3>
+              <FileUpload onFilesSelected={handleFilesSelected} />
+              
+              {rasterBounds && (
+                <div className="mt-3 p-3 bg-blue-900 bg-opacity-30 rounded-lg border border-blue-600">
+                  <div className="flex items-center mb-2">
+                    <svg className="w-4 h-4 text-blue-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-1.447-.894L15 4m0 13V4m-6 3l6-3" />
+                    </svg>
+                    <h4 className="text-xs font-medium text-blue-300">Raster Extent</h4>
+                  </div>
+                  <div className="text-xs text-blue-200 space-y-1">
+                    <p>Lon: {rasterBounds.min_lon.toFixed(4)}° to {rasterBounds.max_lon.toFixed(4)}°</p>
+                    <p>Lat: {rasterBounds.min_lat.toFixed(4)}° to {rasterBounds.max_lat.toFixed(4)}°</p>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+          </div>
           
-          <div className="mt-6">
+          {/* Analysis Configuration */}
+          <div className="p-4 border-b border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Time Configuration
+            </h3>
             <TimeControls 
               onConfigChange={handleTimeConfigChange}
               config={config}
@@ -231,83 +260,137 @@ function App() {
             />
           </div>
           
-          <div className="mt-6 space-y-4">
-            <h3 className="text-lg font-semibold">Advanced Settings</h3>
+          {/* Advanced Settings */}
+          <div className="p-4 border-b border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              </svg>
+              Advanced Settings
+            </h3>
             
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Buffer (meters)
-                <span className="text-xs text-gray-400 ml-2">Extra area for shadows</span>
-              </label>
-              <input
-                type="number"
-                value={config.buffer_meters}
-                onChange={(e) => setConfig(prev => ({ ...prev, buffer_meters: Number(e.target.value) }))}
-                disabled={isCalculating}
-                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                Will be converted to degrees based on latitude
-              </p>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium mb-2">Angle Precision (degrees)</label>
-              <select
-                value={config.angle_precision}
-                onChange={(e) => setConfig(prev => ({ ...prev, angle_precision: Number(e.target.value) }))}
-                disabled={isCalculating}
-                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value={0.01}>0.01°</option>
-                <option value={0.1}>0.1°</option>
-                <option value={0.5}>0.5°</option>
-                <option value={1.0}>1.0°</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium mb-2">Shadow Quality</label>
-              <select
-                value={config.shadow_quality}
-                onChange={(e) => setConfig(prev => ({ ...prev, shadow_quality: e.target.value as ShadowQuality }))}
-                disabled={isCalculating}
-                className="w-full px-3 py-2 bg-gray-700 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value="Fast">Fast (Binary)</option>
-                <option value="Normal">Normal (2x2 edges)</option>
-                <option value="High">High (4x4 edges)</option>
-                <option value="Scientific">Scientific (8x8 full)</option>
-              </select>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-300">
+                  Analysis Buffer
+                  <span className="text-xs text-gray-500 ml-2">(meters)</span>
+                </label>
+                <input
+                  type="number"
+                  value={config.buffer_meters}
+                  onChange={(e) => setConfig(prev => ({ ...prev, buffer_meters: Number(e.target.value) }))}
+                  disabled={isCalculating}
+                  className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ color: 'white' }}
+                />
+                <p className="text-xs text-gray-500 mt-1">Extra area around AOI for shadow casting</p>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-300">Solar Position Precision</label>
+                <div className="relative">
+                  <select
+                    value={config.angle_precision}
+                    onChange={(e) => setConfig(prev => ({ ...prev, angle_precision: Number(e.target.value) }))}
+                    disabled={isCalculating}
+                    className="w-full px-3 py-2 pr-8 rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ 
+                      backgroundColor: '#374151', 
+                      color: '#f9fafb',
+                      WebkitAppearance: 'none',
+                      MozAppearance: 'none',
+                      appearance: 'none'
+                    }}
+                  >
+                    <option value={0.01} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>High (0.01°)</option>
+                    <option value={0.1} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Normal (0.1°)</option>
+                    <option value={0.5} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Fast (0.5°)</option>
+                    <option value={1.0} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Draft (1.0°)</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-300">Rendering Quality</label>
+                <div className="relative">
+                  <select
+                    value={config.shadow_quality}
+                    onChange={(e) => setConfig(prev => ({ ...prev, shadow_quality: e.target.value as ShadowQuality }))}
+                    disabled={isCalculating}
+                    className="w-full px-3 py-2 pr-8 rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ 
+                      backgroundColor: '#374151', 
+                      color: '#f9fafb',
+                      WebkitAppearance: 'none',
+                      MozAppearance: 'none',
+                      appearance: 'none'
+                    }}
+                  >
+                    <option value="Fast" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Fast</option>
+                    <option value="Normal" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Normal</option>
+                    <option value="High" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>High</option>
+                    <option value="Scientific" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Scientific</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           
-          <button
-            onClick={handleCalculate}
-            disabled={isCalculating || !config.dtm_path || !config.dsm_path || config.aoi.length === 0}
-            className="mt-6 w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-600 disabled:to-gray-600 rounded-md font-medium transition-all duration-200 transform hover:scale-[1.02] disabled:scale-100"
-          >
-            {isCalculating ? 'Calculating...' : 'Calculate Shadows'}
-          </button>
-          
-          {hasResults && (
-            <div className="mt-4 space-y-2">
-              <button
-                onClick={() => handleExport('geotiff')}
-                disabled={isCalculating}
-                className="w-full py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md transition-colors"
-              >
-                Export as GeoTIFF
-              </button>
-              <button
-                onClick={() => handleExport('csv')}
-                disabled={isCalculating}
-                className="w-full py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md transition-colors"
-              >
-                Export as CSV
-              </button>
-            </div>
-          )}
+          {/* Action Buttons */}
+          <div className="p-4">
+            <button
+              onClick={handleCalculate}
+              disabled={isCalculating || !config.dtm_path || !config.dsm_path || config.aoi.length === 0}
+              className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-medium rounded-lg shadow-lg transition-all duration-200 transform hover:scale-[1.01] disabled:scale-100 disabled:shadow-none"
+            >
+              {isCalculating ? (
+                <div className="flex items-center justify-center">
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Analyzing Shadows...
+                </div>
+              ) : (
+                'Run Shadow Analysis'
+              )}
+            </button>
+            
+            {hasResults && (
+              <div className="mt-4 space-y-2">
+                <div className="text-xs font-medium text-gray-400 mb-2 flex items-center">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Export Results
+                </div>
+                <button
+                  onClick={() => handleExport('geotiff')}
+                  disabled={isCalculating}
+                  className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
+                >
+                  Export as GeoTIFF
+                </button>
+                <button
+                  onClick={() => handleExport('csv')}
+                  disabled={isCalculating}
+                  className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
+                >
+                  Export as CSV
+                </button>
+              </div>
+            )}
+          </div>
         </aside>
         
         <main className={`flex-1 relative ${isCalculating ? 'pointer-events-none' : ''}`}>

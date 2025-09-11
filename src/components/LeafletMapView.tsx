@@ -53,6 +53,7 @@ const LeafletMapView: React.FC<MapViewProps> = ({
   const drawnItems = useRef<L.FeatureGroup | null>(null);
   const averageShadowLayer = useRef<L.ImageOverlay | null>(null);
   const legendControl = useRef<L.Control | null>(null);
+  const rasterBoundsLayer = useRef<L.Rectangle | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
@@ -172,28 +173,60 @@ const LeafletMapView: React.FC<MapViewProps> = ({
       if (legendControl.current) {
         map.current?.removeControl(legendControl.current);
       }
+      if (rasterBoundsLayer.current) {
+        map.current?.removeLayer(rasterBoundsLayer.current);
+      }
       map.current?.remove();
       map.current = null;
     };
   }, [onAOIDrawn]);
 
-  // Handle raster bounds - zoom to extent when rasters are loaded
+  // Handle raster bounds - zoom to extent and show bounding box
   useEffect(() => {
-    if (!map.current || !rasterBounds) return;
+    if (!map.current) return;
 
-    // Create bounds for zooming only
+    // Remove existing bounding box if it exists
+    if (rasterBoundsLayer.current) {
+      map.current.removeLayer(rasterBoundsLayer.current);
+      rasterBoundsLayer.current = null;
+    }
+
+    if (!rasterBounds) return;
+
+    // Create bounds for zooming and visualization
     const bounds = L.latLngBounds(
       [rasterBounds.min_lat, rasterBounds.min_lon],
       [rasterBounds.max_lat, rasterBounds.max_lon]
     );
 
-    // Zoom to bounds with some padding (but don't draw rectangle)
+    // Add visible rectangular bounding box
+    rasterBoundsLayer.current = L.rectangle(bounds, {
+      color: '#3b82f6',      // Blue color
+      fillColor: '#3b82f6',  // Blue fill
+      fillOpacity: 0.1,      // Low fill opacity
+      weight: 2,             // Border thickness
+      opacity: 0.8,          // Border opacity
+      dashArray: '5, 5',     // Dashed border
+      interactive: false     // Allow clicks through
+    }).addTo(map.current);
+
+    // Add popup to the bounding box
+    rasterBoundsLayer.current.bindPopup(`
+      <div style="color: black; font-size: 12px;">
+        <strong>Raster Data Extent</strong><br/>
+        <strong>Longitude:</strong> ${rasterBounds.min_lon.toFixed(4)}° to ${rasterBounds.max_lon.toFixed(4)}°<br/>
+        <strong>Latitude:</strong> ${rasterBounds.min_lat.toFixed(4)}° to ${rasterBounds.max_lat.toFixed(4)}°<br/>
+        <strong>Size:</strong> ${((rasterBounds.max_lon - rasterBounds.min_lon) * 111320).toFixed(0)}m × ${((rasterBounds.max_lat - rasterBounds.min_lat) * 111320).toFixed(0)}m (approx)
+      </div>
+    `);
+
+    // Zoom to bounds with some padding
     map.current.fitBounds(bounds, {
       padding: [50, 50],
       maxZoom: 16
     });
 
-    console.log('Zoomed to raster bounds:', bounds);
+    console.log('Added raster bounding box and zoomed to bounds:', bounds);
   }, [rasterBounds]);
 
   // Handle shadow data visualization - REMOVED: Now using averageShadowRaster instead
@@ -246,44 +279,44 @@ const LeafletMapView: React.FC<MapViewProps> = ({
     
     if (!ctx) return;
 
-    // Create better shadow color mapping (0=no shadow, 1=full shadow)
+    // Create improved shadow color mapping with better low-shadow visualization
     const imageData = ctx.createImageData(width, height);
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4;
         const shadowValue = Math.max(0, Math.min(1, data[y][x])); // Clamp to 0-1
         
-        // Shadow color scheme: Yellow (0% shadow) -> Orange -> Red -> Dark Purple (100% shadow)
+        // Improved shadow color scheme with sand/white for low shadows
         let r, g, b, a;
         
-        if (shadowValue < 0.25) {
-          // Light shadow: Yellow to Orange (very transparent)
-          const t = shadowValue / 0.25;
-          r = Math.round(255 - t * 55);  // 255 -> 200
-          g = Math.round(255 - t * 55);  // 255 -> 200  
-          b = Math.round(100 * (1 - t)); // 100 -> 0
-          a = 60 + shadowValue * 60;     // Much lower alpha (60-75)
-        } else if (shadowValue < 0.5) {
-          // Medium shadow: Orange to Red (still quite transparent)
-          const t = (shadowValue - 0.25) / 0.25;
-          r = Math.round(200 + t * 55);  // 200 -> 255
-          g = Math.round(200 - t * 100); // 200 -> 100
-          b = 0;
-          a = 75 + shadowValue * 85;     // Lower alpha (75-117)
-        } else if (shadowValue < 0.75) {
-          // Heavy shadow: Red to Dark Red
-          const t = (shadowValue - 0.5) / 0.25;
-          r = Math.round(255 - t * 155); // 255 -> 100
-          g = Math.round(100 - t * 70);  // 100 -> 30
-          b = Math.round(t * 50);        // 0 -> 50
-          a = 200;
+        if (shadowValue <= 0.5) {
+          // Low shadow areas (0-50%): Sand/white tones with high transparency
+          const t = shadowValue / 0.5;
+          r = Math.round(255 - t * 35);   // 255 -> 220 (stay light/sandy)
+          g = Math.round(250 - t * 30);   // 250 -> 220 (warm sand color)
+          b = Math.round(235 - t * 65);   // 235 -> 170 (slight brown tint)
+          a = Math.round(20 + t * 60);    // Very transparent: 20 -> 80
+        } else if (shadowValue < 0.7) {
+          // Medium shadow: Transition from sand to orange
+          const t = (shadowValue - 0.5) / 0.2;
+          r = Math.round(220 + t * 35);   // 220 -> 255
+          g = Math.round(220 - t * 70);   // 220 -> 150
+          b = Math.round(170 - t * 170);  // 170 -> 0
+          a = Math.round(80 + t * 80);    // 80 -> 160
+        } else if (shadowValue < 0.85) {
+          // Heavy shadow: Orange to red
+          const t = (shadowValue - 0.7) / 0.15;
+          r = 255;                        // Stay full red
+          g = Math.round(150 - t * 90);   // 150 -> 60
+          b = Math.round(t * 30);         // 0 -> 30
+          a = Math.round(160 + t * 60);   // 160 -> 220
         } else {
-          // Very heavy shadow: Dark Red to Purple
-          const t = (shadowValue - 0.75) / 0.25;
-          r = Math.round(100 - t * 50);  // 100 -> 50
-          g = Math.round(30 - t * 20);   // 30 -> 10
-          b = Math.round(50 + t * 100);  // 50 -> 150
-          a = 220;
+          // Very heavy shadow: Red to dark purple
+          const t = (shadowValue - 0.85) / 0.15;
+          r = Math.round(255 - t * 155);  // 255 -> 100
+          g = Math.round(60 - t * 40);    // 60 -> 20
+          b = Math.round(30 + t * 120);   // 30 -> 150
+          a = Math.round(220 + t * 35);   // 220 -> 255 (fully opaque for highest shadows)
         }
         
         imageData.data[idx] = r;
