@@ -29,6 +29,7 @@ indicatif = "0.17"
 anyhow = "1.0"
 thiserror = "1.0"
 dirs = "5.0"
+num_cpus = "1.16"
 
 [features]
 default = ["custom-protocol"]

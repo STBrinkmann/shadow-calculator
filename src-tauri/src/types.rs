@@ -14,6 +14,7 @@ pub struct Config {
     pub buffer_meters: f64,
     pub angle_precision: f64,
     pub shadow_quality: ShadowQuality,
+    pub cpu_cores: Option<usize>, // Number of CPU cores to use (None = auto-detect)
 }
 
 impl Config {
@@ -35,6 +36,16 @@ impl Config {
             .collect();
 
         Ok(Polygon::new(geo_types::LineString::from(coords), vec![]))
+    }
+
+    pub fn get_cpu_cores(&self) -> usize {
+        match self.cpu_cores {
+            Some(cores) => {
+                let max_cores = num_cpus::get();
+                cores.min(max_cores).max(1) // Ensure between 1 and max available
+            }
+            None => num_cpus::get(), // Auto-detect all available cores
+        }
     }
 }
 

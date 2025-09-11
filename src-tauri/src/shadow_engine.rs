@@ -1,12 +1,12 @@
 use crate::sun_position::SunCalculator;
 use crate::types::*;
-use ndarray::{s, Array2, Array3};
-// use rayon::prelude::*; // Currently unused
 use chrono::Timelike;
 use indicatif::{ProgressBar, ProgressStyle};
+use ndarray::{s, Array2, Array3};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager}; // IMPORTANT: Add this import for hour() method
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressUpdate {
@@ -66,6 +66,18 @@ impl ShadowEngine {
         config: Config,
         app_handle: AppHandle,
     ) -> Self {
+        // Configure Rayon thread pool with specified CPU cores
+        let cpu_cores = config.get_cpu_cores();
+        println!("Setting up Rayon thread pool with {} cores", cpu_cores);
+
+        if let Err(e) = rayon::ThreadPoolBuilder::new()
+            .num_threads(cpu_cores)
+            .build_global()
+        {
+            eprintln!("Warning: Failed to configure Rayon thread pool: {}", e);
+            println!("Using default thread pool configuration");
+        }
+
         let heights = &dsm - &dtm;
         let polygon = config.to_polygon().unwrap_or(geo_types::Polygon::new(
             geo_types::LineString::from(vec![
@@ -187,12 +199,20 @@ impl ShadowEngine {
         // Convert sun angles to ray direction
         let sun_dir = self.sun_direction(azimuth, elevation);
 
-        // Process each cell
-        for row in 0..n_rows {
-            for col in 0..n_cols {
-                let shadow_value = self.calculate_cell_shadow(row, col, sun_dir);
-                shadow_map[[row, col]] = shadow_value;
-            }
+        // Create a vector of all cell coordinates for parallel processing
+        let cell_coords: Vec<(usize, usize)> = (0..n_rows)
+            .flat_map(|row| (0..n_cols).map(move |col| (row, col)))
+            .collect();
+
+        // Process all cells in parallel
+        let shadow_values: Vec<f32> = cell_coords
+            .par_iter()
+            .map(|&(row, col)| self.calculate_cell_shadow(row, col, sun_dir))
+            .collect();
+
+        // Assign results back to the shadow map
+        for ((row, col), &shadow_value) in cell_coords.iter().zip(shadow_values.iter()) {
+            shadow_map[[*row, *col]] = shadow_value;
         }
 
         // Apply edge refinement based on quality setting
@@ -251,20 +271,28 @@ impl ShadowEngine {
         let (n_rows, n_cols) = shadow_map.dim();
         let mut refined = shadow_map.clone();
 
-        // Detect edges
-        for row in 1..n_rows - 1 {
-            for col in 1..n_cols - 1 {
-                if self.is_shadow_edge(&shadow_map, row, col) {
-                    let sub_samples = match self.config.shadow_quality {
-                        ShadowQuality::Normal => 2,
-                        ShadowQuality::High => 4,
-                        ShadowQuality::Scientific => 8,
-                        _ => 1,
-                    };
+        // Create a vector of edge cell coordinates for parallel processing
+        let edge_coords: Vec<(usize, usize)> = (1..n_rows - 1)
+            .flat_map(|row| (1..n_cols - 1).map(move |col| (row, col)))
+            .filter(|&(row, col)| self.is_shadow_edge(&shadow_map, row, col))
+            .collect();
 
-                    refined[[row, col]] = self.subsample_cell(row, col, sun_dir, sub_samples);
-                }
-            }
+        let sub_samples = match self.config.shadow_quality {
+            ShadowQuality::Normal => 2,
+            ShadowQuality::High => 4,
+            ShadowQuality::Scientific => 8,
+            _ => 1,
+        };
+
+        // Process edge cells in parallel
+        let refined_values: Vec<f32> = edge_coords
+            .par_iter()
+            .map(|&(row, col)| self.subsample_cell(row, col, sun_dir, sub_samples))
+            .collect();
+
+        // Assign refined values back to the shadow map
+        for ((row, col), &refined_value) in edge_coords.iter().zip(refined_values.iter()) {
+            refined[[*row, *col]] = refined_value;
         }
 
         refined
@@ -409,28 +437,37 @@ impl ShadowEngine {
         let mut afternoon_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
         let mut max_consecutive = Array2::<f32>::zeros((n_rows, n_cols));
 
-        for row in 0..n_rows {
-            for col in 0..n_cols {
+        // Create a vector of all cell coordinates for parallel processing
+        let cell_coords: Vec<(usize, usize)> = (0..n_rows)
+            .flat_map(|row| (0..n_cols).map(move |col| (row, col)))
+            .collect();
+
+        // Calculate statistics for all cells in parallel
+        let stats_results: Vec<(f32, f32, f32, f32)> = cell_coords
+            .par_iter()
+            .map(|&(row, col)| {
                 let cell_series = shadow_fraction.slice(s![.., row, col]);
 
                 // Total shadow hours
-                total_shadow_hours[[row, col]] = cell_series.sum() * self.config.hour_interval;
+                let total = cell_series.sum() * self.config.hour_interval;
 
                 // Morning vs afternoon
+                let mut morning = 0.0;
+                let mut afternoon = 0.0;
                 for (t_idx, &timestamp) in timestamps.iter().enumerate() {
-                    let hour = timestamp.hour(); // This now works with the Timelike import
+                    let hour = timestamp.hour();
                     let shadow_val = cell_series[t_idx] * self.config.hour_interval;
 
                     if hour < 12 {
-                        morning_shadow_hours[[row, col]] += shadow_val;
+                        morning += shadow_val;
                     } else {
-                        afternoon_shadow_hours[[row, col]] += shadow_val;
+                        afternoon += shadow_val;
                     }
                 }
 
                 // Max consecutive shadow hours
                 let mut current_consecutive = 0.0;
-                let mut max_consec: f32 = 0.0; // FIX: Explicitly typed as f32
+                let mut max_consec = 0.0f32;
                 for &val in cell_series.iter() {
                     if val > 0.5 {
                         current_consecutive += self.config.hour_interval;
@@ -439,8 +476,19 @@ impl ShadowEngine {
                         current_consecutive = 0.0;
                     }
                 }
-                max_consecutive[[row, col]] = max_consec;
-            }
+
+                (total, morning, afternoon, max_consec)
+            })
+            .collect();
+
+        // Assign results back to arrays
+        for ((row, col), &(total, morning, afternoon, max_consec)) in
+            cell_coords.iter().zip(stats_results.iter())
+        {
+            total_shadow_hours[[*row, *col]] = total;
+            morning_shadow_hours[[*row, *col]] = morning;
+            afternoon_shadow_hours[[*row, *col]] = afternoon;
+            max_consecutive[[*row, *col]] = max_consec;
         }
 
         let avg_shadow_percentage =

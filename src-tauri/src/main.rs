@@ -529,6 +529,23 @@ async fn get_timestamps(state: State<'_, AppState>) -> Result<Vec<String>, Strin
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CpuInfo {
+    total_cores: usize,
+    logical_cores: usize,
+}
+
+#[tauri::command]
+async fn get_cpu_info() -> Result<CpuInfo, String> {
+    let total_cores = num_cpus::get();
+    let logical_cores = num_cpus::get(); // In most cases, this is the same as total cores
+
+    Ok(CpuInfo {
+        total_cores,
+        logical_cores,
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState {
@@ -544,7 +561,8 @@ fn main() {
             get_shadow_at_time,
             get_timestamps,
             get_average_shadow_raster,
-            get_all_summary_data
+            get_all_summary_data,
+            get_cpu_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
