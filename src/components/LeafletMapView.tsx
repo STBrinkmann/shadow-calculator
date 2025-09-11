@@ -407,11 +407,10 @@ const LeafletMapView: React.FC<MapViewProps> = ({
         const afternoonHours = getRasterValueAtLatLng(e.latlng, allSummaryData.afternoon_shadow_hours);
 
         if (shadowValue !== null) {
-          // Calculate percentages based on approximate time periods
-          // Assuming morning: 6h, noon: 4h, afternoon: 6h for a typical day
-          const morningPercent = morningHours ? (morningHours * 100 / 6) : null;
-          const noonPercent = noonHours ? (noonHours * 100 / 4) : null;
-          const afternoonPercent = afternoonHours ? (afternoonHours * 100 / 6) : null;
+          // Calculate percentages as portion of total shadow hours
+          const morningPercent = (totalHours && totalHours > 0 && morningHours) ? (morningHours / totalHours * 100) : 0;
+          const noonPercent = (totalHours && totalHours > 0 && noonHours) ? (noonHours / totalHours * 100) : 0;
+          const afternoonPercent = (totalHours && totalHours > 0 && afternoonHours) ? (afternoonHours / totalHours * 100) : 0;
 
           const popupContent = `
             <div style="font-family: sans-serif; min-width: 240px;">
@@ -437,20 +436,23 @@ const LeafletMapView: React.FC<MapViewProps> = ({
                 </div>
               </div>
               <div style="background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb;">
-                <h5 style="margin: 0 0 8px 0; color: #374151; font-size: 14px; font-weight: bold;">🕒 Time Period Analysis</h5>
+                <h5 style="margin: 0 0 8px 0; color: #374151; font-size: 14px; font-weight: bold;">🕒 Shadow Distribution by Time Period</h5>
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 12px;">
                   <div style="text-align: center; padding: 6px; background: #fef3c7; border-radius: 4px;">
                     <div style="font-weight: bold; color: #92400e; font-size: 10px;">MORNING</div>
-                    <div style="color: #92400e; font-weight: bold;">${morningPercent?.toFixed(0) || 'N/A'}%</div>
+                    <div style="color: #92400e; font-weight: bold;">${morningPercent.toFixed(1)}%</div>
                   </div>
                   <div style="text-align: center; padding: 6px; background: #fef5e7; border-radius: 4px;">
                     <div style="font-weight: bold; color: #c2410c; font-size: 10px;">NOON</div>
-                    <div style="color: #c2410c; font-weight: bold;">${noonPercent?.toFixed(0) || 'N/A'}%</div>
+                    <div style="color: #c2410c; font-weight: bold;">${noonPercent.toFixed(1)}%</div>
                   </div>
                   <div style="text-align: center; padding: 6px; background: #ecfdf5; border-radius: 4px;">
                     <div style="font-weight: bold; color: #065f46; font-size: 10px;">AFTERNOON</div>
-                    <div style="color: #065f46; font-weight: bold;">${afternoonPercent?.toFixed(0) || 'N/A'}%</div>
+                    <div style="color: #065f46; font-weight: bold;">${afternoonPercent.toFixed(1)}%</div>
                   </div>
+                </div>
+                <div style="margin-top: 6px; font-size: 10px; color: #6b7280; text-align: center;">
+                  Shows what portion of total shadow occurs in each time period
                 </div>
               </div>
               </div>
