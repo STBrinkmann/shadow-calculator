@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
+import { UploadMode } from '../types';
 
 // Fix Leaflet icon issue
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -43,20 +44,25 @@ interface MapViewProps {
   rasterBounds?: RasterBounds | null;
   averageShadowRaster?: RasterData | null;
   allSummaryData?: AllSummaryData | null;
+  uploadMode?: UploadMode;
 }
 
 const LeafletMapView: React.FC<MapViewProps> = ({ 
   onAOIDrawn, 
   rasterBounds,
   averageShadowRaster,
-  allSummaryData
+  allSummaryData,
+  uploadMode = 'calculate'
 }) => {
+  const [instructionsCollapsed, setInstructionsCollapsed] = useState(false);
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const drawnItems = useRef<L.FeatureGroup | null>(null);
   const averageShadowLayer = useRef<L.ImageOverlay | null>(null);
   const legendControl = useRef<L.Control | null>(null);
   const rasterBoundsLayer = useRef<L.Rectangle | null>(null);
+  const instructionsControl = useRef<L.Control | null>(null);
+  const instructionsDiv = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
@@ -140,29 +146,27 @@ const LeafletMapView: React.FC<MapViewProps> = ({
       onAOIDrawn([]);
     });
 
-    // Add instructions
-    const info = new L.Control({ position: 'topright' });
-    info.onAdd = function () {
-      const div = L.DomUtil.create('div', 'info');
-      div.style.backgroundColor = 'white';
-      div.style.padding = '10px';
-      div.style.borderRadius = '5px';
-      div.style.boxShadow = '0 0 15px rgba(0,0,0,0.2)';
-      div.style.maxWidth = '250px';
-      div.innerHTML = `
-        <h4 style="margin: 0 0 5px 0; color: black;">Instructions</h4>
-        <ol style="margin: 0; padding-left: 20px; font-size: 12px; color: black;">
-          <li>Load DTM and DSM files</li>
-          <li>Map will zoom to raster extent</li>
-          <li>Click polygon tool (left side)</li>
-          <li>Draw your Area of Interest</li>
-          <li>Click first point to complete</li>
-          <li>Click "Calculate Shadows"</li>
-        </ol>
-      `;
-      return div;
-    };
-    info.addTo(map.current);
+    // Add instructions (only in calculate mode)
+    if (uploadMode === 'calculate') {
+      instructionsControl.current = new L.Control({ position: 'topright' });
+      instructionsControl.current.onAdd = function () {
+        const div = L.DomUtil.create('div', 'info') as HTMLDivElement;
+        instructionsDiv.current = div;
+        div.style.backgroundColor = 'white';
+        div.style.padding = '10px';
+        div.style.borderRadius = '5px';
+        div.style.boxShadow = '0 0 15px rgba(0,0,0,0.2)';
+        div.style.maxWidth = '250px';
+        div.style.cursor = 'pointer';
+        
+        div.onclick = () => {
+          setInstructionsCollapsed(!instructionsCollapsed);
+        };
+        
+        return div;
+      };
+      instructionsControl.current.addTo(map.current);
+    }
 
     return () => {
       if (averageShadowLayer.current) {
@@ -179,10 +183,51 @@ const LeafletMapView: React.FC<MapViewProps> = ({
       if (rasterBoundsLayer.current) {
         map.current?.removeLayer(rasterBoundsLayer.current);
       }
+      if (instructionsControl.current) {
+        map.current?.removeControl(instructionsControl.current);
+      }
       map.current?.remove();
       map.current = null;
     };
   }, [onAOIDrawn]);
+
+  // Handle instructions collapse/expand
+  useEffect(() => {
+    if (!instructionsDiv.current) return;
+    
+    const updateInstructionsContent = () => {
+      if (instructionsCollapsed) {
+        instructionsDiv.current!.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <h4 style="margin: 0; color: black; font-size: 14px;">Instructions</h4>
+            <span style="font-size: 16px; color: #666; margin-left: 8px;">▶</span>
+          </div>
+        `;
+      } else {
+        instructionsDiv.current!.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px;">
+            <h4 style="margin: 0; color: black; font-size: 14px;">Instructions</h4>
+            <span style="font-size: 16px; color: #666; margin-left: 8px;">▼</span>
+          </div>
+          <ol style="margin: 0; padding-left: 20px; font-size: 12px; color: black;">
+            <li>Load DTM and DSM files</li>
+            <li>Map will zoom to raster extent</li>
+            <li>Click polygon tool (left side)</li>
+            <li>Draw your Area of Interest</li>
+            <li>Click first point to complete</li>
+            <li>Click "Calculate Shadows"</li>
+          </ol>
+        `;
+      }
+      
+      // Re-attach click handler after updating innerHTML
+      instructionsDiv.current!.onclick = () => {
+        setInstructionsCollapsed(prev => !prev);
+      };
+    };
+    
+    updateInstructionsContent();
+  }, [instructionsCollapsed]);
 
   // Handle raster bounds - zoom to extent and show bounding box
   useEffect(() => {
@@ -416,7 +461,11 @@ const LeafletMapView: React.FC<MapViewProps> = ({
             (totalAvailableSolar / dailySolarHours) : 1;
           
           // Calculate per-day values
-          const totalHoursPerDay = totalHours ? (totalHours / analysisDays) : 0;
+          let totalHoursPerDay = totalHours ? (totalHours / analysisDays) : 0;
+          // Ensure totalHoursPerDay doesn't exceed daily solar hours (due to rounding errors)
+          if (dailySolarHours && totalHoursPerDay > dailySolarHours) {
+            totalHoursPerDay = dailySolarHours;
+          }
           const maxConsecutivePerDay = maxConsecutive || 0; // This is already per occurrence
           const morningHoursPerDay = morningHours ? (morningHours / analysisDays) : 0;
           const noonHoursPerDay = noonHours ? (noonHours / analysisDays) : 0;
@@ -438,22 +487,25 @@ const LeafletMapView: React.FC<MapViewProps> = ({
               <h4 style="margin: 0 0 12px 0; color: #333; font-size: 16px; border-bottom: 2px solid #4f46e5; padding-bottom: 4px;">
                 📊 Shadow Statistics
               </h4>
+              <div style="margin-bottom: 12px; font-size: 13px; color: #4b5563;">
+                Average solar day length: <span style="font-weight: bold;">${dailySolarHours ? dailySolarHours.toFixed(1) : '0.0'}h</span>
+              </div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; margin-bottom: 12px;">
-                <div style="background: #f3f4f6; padding: 8px; border-radius: 4px;">
-                  <div style="font-weight: bold; color: #6b7280; font-size: 11px;">AVERAGE SHADOW</div>
-                  <div style="font-size: 16px; color: #1f2937; font-weight: bold;">${Math.round(shadowValue * 100)}%</div>
-                </div>
                 <div style="background: #fef3c7; padding: 8px; border-radius: 4px;">
-                  <div style="font-weight: bold; color: #92400e; font-size: 11px;">TOTAL PER DAY</div>
+                  <div style="font-weight: bold; color: #92400e; font-size: 11px;">SHADOW HOURS/DAY</div>
                   <div style="font-size: 14px; color: #92400e; font-weight: bold;">${totalHoursPerDay.toFixed(1)}h (${totalSolarDayPercent.toFixed(0)}%)</div>
+                </div>
+                <div style="background: #dcfce7; padding: 8px; border-radius: 4px;">
+                  <div style="font-weight: bold; color: #166534; font-size: 11px;">SUN HOURS/DAY</div>
+                  <div style="font-size: 14px; color: #166534; font-weight: bold;">${(dailySolarHours - totalHoursPerDay).toFixed(1)}h (${(100 - totalSolarDayPercent).toFixed(0)}%)</div>
                 </div>
                 <div style="background: #fee2e2; padding: 8px; border-radius: 4px;">
                   <div style="font-weight: bold; color: #991b1b; font-size: 11px;">MAX CONSECUTIVE</div>
-                  <div style="font-size: 14px; color: #991b1b; font-weight: bold;">${maxConsecutivePerDay.toFixed(1)}h (${maxConsecutiveSolarPercent.toFixed(0)}%)</div>
+                  <div style="font-size: 14px; color: #991b1b; font-weight: bold;">${maxConsecutivePerDay.toFixed(1)}h</div>
                 </div>
-                <div style="background: #ddd6fe; padding: 8px; border-radius: 4px;">
-                  <div style="font-weight: bold; color: #5b21b6; font-size: 11px;">SOLAR EFFICIENCY</div>
-                  <div style="font-size: 16px; color: #5b21b6; font-weight: bold;">${Math.round((1 - shadowValue) * 100)}%</div>
+                <div style="background: #f3f4f6; padding: 8px; border-radius: 4px;">
+                  <div style="font-weight: bold; color: #6b7280; font-size: 11px;">SOLAR POTENTIAL</div>
+                  <div style="font-size: 14px; color: #6b7280; font-weight: bold;">${Math.round((1 - shadowValue) * 100)}%</div>
                 </div>
               </div>
               <div style="background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb;">

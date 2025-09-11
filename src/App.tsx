@@ -509,6 +509,7 @@ function App() {
             rasterBounds={rasterBounds}
             averageShadowRaster={averageShadowRaster}
             allSummaryData={allSummaryData}
+            uploadMode={uploadMode}
           />
           
           {hasResults && (

@@ -147,7 +147,7 @@ const DualModeUpload: React.FC<DualModeUploadProps> = ({
               className="text-blue-600 focus:ring-blue-500"
             />
             <label htmlFor="upload-mode" className="text-sm text-gray-300">
-              View Results (Upload .tif results file)
+              Load Results (Upload .tif results file)
             </label>
           </div>
         </div>
