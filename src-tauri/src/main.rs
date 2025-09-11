@@ -3,18 +3,18 @@
     windows_subsystem = "windows"
 )]
 
-mod types;
+mod raster_io;
 mod shadow_engine;
 mod sun_position;
-mod raster_io;
+mod types;
 
-use types::*;
-use shadow_engine::ShadowEngine;
 use raster_io::RasterIO;
+use serde::{Deserialize, Serialize};
+use shadow_engine::ShadowEngine;
 use std::path::Path;
-use tauri::State;
 use std::sync::Mutex;
-use serde::{Serialize, Deserialize};
+use tauri::State;
+use types::*;
 
 struct AppState {
     current_config: Mutex<Option<Config>>,
@@ -48,36 +48,38 @@ async fn load_rasters(
         .map_err(|e| format!("Failed to load DTM: {}", e))?;
     let dsm = RasterIO::read_raster(Path::new(&dsm_path))
         .map_err(|e| format!("Failed to load DSM: {}", e))?;
-    
+
     // Validate matching dimensions
     if dtm.data.shape() != dsm.data.shape() {
         return Err("DTM and DSM must have the same dimensions".to_string());
     }
-    
+
     // Calculate bounds (assuming WGS84 or getting from transform)
     let (height, width) = (dtm.data.shape()[1], dtm.data.shape()[2]);
     let transform = &dtm.transform;
-    
+
     // Calculate corner coordinates
     let min_lon = transform[0];
     let max_lon = transform[0] + (width as f64 * transform[1]);
     let max_lat = transform[3];
     let min_lat = transform[3] + (height as f64 * transform[5]); // transform[5] is negative
-    
+
     let bounds = RasterBounds {
         min_lon,
         max_lon,
         min_lat: min_lat.min(max_lat),
         max_lat: max_lat.max(min_lat),
     };
-    
+
     // Store bounds in state
     let mut bounds_guard = state.raster_bounds.lock().unwrap();
     *bounds_guard = Some(bounds.clone());
-    
-    println!("Raster bounds: lon [{:.6}, {:.6}], lat [{:.6}, {:.6}]", 
-             bounds.min_lon, bounds.max_lon, bounds.min_lat, bounds.max_lat);
-    
+
+    println!(
+        "Raster bounds: lon [{:.6}, {:.6}], lat [{:.6}, {:.6}]",
+        bounds.min_lon, bounds.max_lon, bounds.min_lat, bounds.max_lat
+    );
+
     Ok(bounds)
 }
 
@@ -88,37 +90,39 @@ async fn calculate_shadows(
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     println!("Starting shadow calculation with config: {:?}", config);
-    
+
     // Load rasters
     let dtm_data = RasterIO::read_raster(Path::new(&config.dtm_path))
         .map_err(|e| format!("Failed to load DTM: {}", e))?;
     let dsm_data = RasterIO::read_raster(Path::new(&config.dsm_path))
         .map_err(|e| format!("Failed to load DSM: {}", e))?;
-    
+
     // Convert AOI to polygon
-    let polygon = config.to_polygon()
+    let polygon = config
+        .to_polygon()
         .map_err(|e| format!("Failed to parse AOI: {}", e))?;
-    
+
     // Convert buffer from meters to degrees (approximate)
     // Get the center latitude for conversion
-    let center_lat = polygon.exterior().coords()
-        .map(|c| c.y)
-        .sum::<f64>() / polygon.exterior().coords().count() as f64;
-    
+    let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
+        / polygon.exterior().coords().count() as f64;
+
     let buffer_degrees = meters_to_degrees(config.buffer_meters, center_lat);
-    println!("Buffer: {}m = {:.6}° at latitude {:.3}°", 
-             config.buffer_meters, buffer_degrees, center_lat);
-    
+    println!(
+        "Buffer: {}m = {:.6}° at latitude {:.3}°",
+        config.buffer_meters, buffer_degrees, center_lat
+    );
+
     // Clip to AOI with buffer (now in degrees)
     let dtm_clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
         .map_err(|e| format!("Failed to clip DTM: {}", e))?;
     let dsm_clipped = RasterIO::clip_to_aoi(&dsm_data, &polygon, buffer_degrees)
         .map_err(|e| format!("Failed to clip DSM: {}", e))?;
-    
+
     // Extract 2D arrays
     let dtm_2d = dtm_clipped.data.slice(ndarray::s![0, .., ..]).to_owned();
     let dsm_2d = dsm_clipped.data.slice(ndarray::s![0, .., ..]).to_owned();
-    
+
     // Store clipped raster information for later visualization
     let (n_rows, n_cols) = dtm_2d.dim();
     let clipped_bounds = RasterBounds {
@@ -127,40 +131,54 @@ async fn calculate_shadows(
         min_lat: dtm_clipped.transform[3] + (n_rows as f64 * dtm_clipped.transform[5]), // transform[5] is negative
         max_lat: dtm_clipped.transform[3],
     };
-    
+
     let clipped_info = ClippedRasterInfo {
         bounds: clipped_bounds,
         transform: dtm_clipped.transform.to_vec(),
         dimensions: (n_rows, n_cols),
     };
-    
+
     let mut clipped_info_guard = state.clipped_raster_info.lock().unwrap();
     *clipped_info_guard = Some(clipped_info);
     drop(clipped_info_guard);
-    
+
     // Calculate pixel resolution in meters
     let resolution = degrees_to_meters(dtm_clipped.transform[1].abs(), center_lat);
-    println!("Pixel resolution: {:.6}° = {:.2}m at latitude {:.3}°", 
-             dtm_clipped.transform[1].abs(), resolution, center_lat);
-    
+    println!(
+        "Pixel resolution: {:.6}° = {:.2}m at latitude {:.3}°",
+        dtm_clipped.transform[1].abs(),
+        resolution,
+        center_lat
+    );
+
     // Create shadow engine with resolution in meters
     let mut config_with_meter_buffer = config.clone();
     config_with_meter_buffer.buffer_meters = config.buffer_meters; // Keep original meters value
-    
-    let engine = ShadowEngine::new_with_app_handle(dtm_2d, dsm_2d, resolution, config_with_meter_buffer, app_handle);
-    let results = engine.calculate_shadows()
+
+    let engine = ShadowEngine::new_with_app_handle(
+        dtm_2d,
+        dsm_2d,
+        resolution,
+        config_with_meter_buffer,
+        app_handle,
+    );
+    let results = engine
+        .calculate_shadows()
         .map_err(|e| format!("Shadow calculation failed: {}", e))?;
-    
+
     let num_timestamps = results.timestamps.len();
-    
+
     // Store results in state
     let mut results_guard = state.current_results.lock().unwrap();
     *results_guard = Some(results);
-    
+
     let mut config_guard = state.current_config.lock().unwrap();
     *config_guard = Some(config);
-    
-    Ok(format!("Calculated shadows for {} timestamps", num_timestamps))
+
+    Ok(format!(
+        "Calculated shadows for {} timestamps",
+        num_timestamps
+    ))
 }
 
 // Helper function to convert meters to degrees
@@ -168,19 +186,19 @@ fn meters_to_degrees(meters: f64, latitude: f64) -> f64 {
     // At the equator: 1 degree ≈ 111,320 meters
     // At latitude φ: 1 degree longitude ≈ 111,320 * cos(φ) meters
     // 1 degree latitude ≈ 111,320 meters (approximately constant)
-    
+
     let lat_rad = latitude.to_radians();
-    
+
     // For longitude: meters / (111320 * cos(latitude))
     // For latitude: meters / 111320
     // We'll use an average for a rough square buffer
-    
+
     let lon_meters_per_degree = 111320.0 * lat_rad.cos();
     let lat_meters_per_degree = 111320.0;
-    
+
     // Use the average for a roughly square buffer
     let avg_meters_per_degree = (lon_meters_per_degree + lat_meters_per_degree) / 2.0;
-    
+
     meters / avg_meters_per_degree
 }
 
@@ -197,19 +215,23 @@ async fn get_shadow_at_time(
     state: State<'_, AppState>,
 ) -> Result<Vec<Vec<f32>>, String> {
     let results = state.current_results.lock().unwrap();
-    
+
     match results.as_ref() {
         Some(results) => {
             let (n_times, _n_rows, _n_cols) = results.shadow_fraction.dim();
-            
+
             if time_index >= n_times {
-                return Err(format!("Time index {} out of range (max: {})", time_index, n_times - 1));
+                return Err(format!(
+                    "Time index {} out of range (max: {})",
+                    time_index,
+                    n_times - 1
+                ));
             }
-            
-            let slice = results.shadow_fraction.slice(ndarray::s![time_index, .., ..]);
-            let rows: Vec<Vec<f32>> = slice.outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
+
+            let slice = results
+                .shadow_fraction
+                .slice(ndarray::s![time_index, .., ..]);
+            let rows: Vec<Vec<f32>> = slice.outer_iter().map(|row| row.to_vec()).collect();
             Ok(rows)
         }
         None => Err("No results available".to_string()),
@@ -235,27 +257,31 @@ struct AllSummaryData {
 }
 
 #[tauri::command]
-async fn get_average_shadow_raster(
-    state: State<'_, AppState>,
-) -> Result<RasterData, String> {
+async fn get_average_shadow_raster(state: State<'_, AppState>) -> Result<RasterData, String> {
     let results = state.current_results.lock().unwrap();
     let clipped_info = state.clipped_raster_info.lock().unwrap();
-    
+
     match (results.as_ref(), clipped_info.as_ref()) {
         (Some(results), Some(clipped_info)) => {
             // Get the average shadow percentage data (Band 2, index 1)
-            let avg_shadow_slice = results.summary_stats.avg_shadow_percentage.slice(ndarray::s![0, .., ..]);
-            let data: Vec<Vec<f32>> = avg_shadow_slice.outer_iter()
+            let avg_shadow_slice = results
+                .summary_stats
+                .avg_shadow_percentage
+                .slice(ndarray::s![0, .., ..]);
+            let data: Vec<Vec<f32>> = avg_shadow_slice
+                .outer_iter()
                 .map(|row| row.to_vec())
                 .collect();
-            
+
             // Verify dimensions match
             let (n_rows, n_cols) = (data.len(), data[0].len());
             if (n_rows, n_cols) != clipped_info.dimensions {
-                return Err(format!("Data dimensions mismatch: expected {:?}, got ({}, {})", 
-                    clipped_info.dimensions, n_rows, n_cols));
+                return Err(format!(
+                    "Data dimensions mismatch: expected {:?}, got ({}, {})",
+                    clipped_info.dimensions, n_rows, n_cols
+                ));
             }
-            
+
             Ok(RasterData {
                 data,
                 bounds: clipped_info.bounds.clone(),
@@ -267,45 +293,53 @@ async fn get_average_shadow_raster(
 }
 
 #[tauri::command]
-async fn get_all_summary_data(
-    state: State<'_, AppState>,
-) -> Result<AllSummaryData, String> {
+async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryData, String> {
     let results = state.current_results.lock().unwrap();
     let clipped_info = state.clipped_raster_info.lock().unwrap();
-    
+
     match (results.as_ref(), clipped_info.as_ref()) {
         (Some(results), Some(clipped_info)) => {
             // Extract all summary layers (Band 0 index)
-            let total_shadow_hours: Vec<Vec<f32>> = results.summary_stats.total_shadow_hours
+            let total_shadow_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .total_shadow_hours
                 .slice(ndarray::s![0, .., ..])
                 .outer_iter()
                 .map(|row| row.to_vec())
                 .collect();
-                
-            let avg_shadow_percentage: Vec<Vec<f32>> = results.summary_stats.avg_shadow_percentage
+
+            let avg_shadow_percentage: Vec<Vec<f32>> = results
+                .summary_stats
+                .avg_shadow_percentage
                 .slice(ndarray::s![0, .., ..])
                 .outer_iter()
                 .map(|row| row.to_vec())
                 .collect();
-                
-            let max_consecutive_shadow: Vec<Vec<f32>> = results.summary_stats.max_consecutive_shadow
+
+            let max_consecutive_shadow: Vec<Vec<f32>> = results
+                .summary_stats
+                .max_consecutive_shadow
                 .slice(ndarray::s![0, .., ..])
                 .outer_iter()
                 .map(|row| row.to_vec())
                 .collect();
-                
-            let morning_shadow_hours: Vec<Vec<f32>> = results.summary_stats.morning_shadow_hours
+
+            let morning_shadow_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .morning_shadow_hours
                 .slice(ndarray::s![0, .., ..])
                 .outer_iter()
                 .map(|row| row.to_vec())
                 .collect();
-                
-            let afternoon_shadow_hours: Vec<Vec<f32>> = results.summary_stats.afternoon_shadow_hours
+
+            let afternoon_shadow_hours: Vec<Vec<f32>> = results
+                .summary_stats
+                .afternoon_shadow_hours
                 .slice(ndarray::s![0, .., ..])
                 .outer_iter()
                 .map(|row| row.to_vec())
                 .collect();
-            
+
             Ok(AllSummaryData {
                 total_shadow_hours,
                 avg_shadow_percentage,
@@ -328,7 +362,7 @@ async fn export_results(
 ) -> Result<String, String> {
     let results = state.current_results.lock().unwrap();
     let config = state.current_config.lock().unwrap();
-    
+
     match (results.as_ref(), config.as_ref()) {
         (Some(results), Some(config)) => {
             // Create output directory in user's home or documents folder
@@ -340,59 +374,87 @@ async fn export_results(
                     .unwrap_or(&std::path::PathBuf::from("."))
                     .join("exports"),
             };
-            
+
             // Create directory if it doesn't exist
             std::fs::create_dir_all(&output_dir)
                 .map_err(|e| format!("Failed to create output directory: {}", e))?;
-            
+
             // Generate timestamp for unique filename
             let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-            
+
             // Build full path with timestamp
             let filename = match format.as_str() {
                 "geotiff" => format!("shadows_{}.tif", timestamp),
                 "csv" => format!("shadows_{}.csv", timestamp),
                 _ => output_path.clone(),
             };
-            
+
             let path = output_dir.join(&filename);
-            
+
             println!("Exporting to: {:?}", path);
-            
+
             match format.as_str() {
                 "geotiff" => {
                     // Get transform from original raster
                     let dtm_data = RasterIO::read_raster(Path::new(&config.dtm_path))
                         .map_err(|e| format!("Failed to load DTM: {}", e))?;
-                    
-                    let polygon = config.to_polygon()
+
+                    let polygon = config
+                        .to_polygon()
                         .map_err(|e| format!("Failed to parse AOI: {}", e))?;
-                    
+
                     // Get center latitude for buffer conversion
-                    let center_lat = polygon.exterior().coords()
-                        .map(|c| c.y)
-                        .sum::<f64>() / polygon.exterior().coords().count() as f64;
-                    
+                    let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
+                        / polygon.exterior().coords().count() as f64;
+
                     let buffer_degrees = meters_to_degrees(config.buffer_meters, center_lat);
-                    
+
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
-                    
+
                     // Combine summary stats and time series
                     let n_summary = 5;
                     let (n_times, n_rows, n_cols) = results.shadow_fraction.dim();
-                    let mut combined = ndarray::Array3::<f32>::zeros((n_summary + n_times, n_rows, n_cols));
-                    
+                    let mut combined =
+                        ndarray::Array3::<f32>::zeros((n_summary + n_times, n_rows, n_cols));
+
                     // Add summary layers with proper indexing
-                    combined.slice_mut(ndarray::s![0, .., ..]).assign(&results.summary_stats.total_shadow_hours.slice(ndarray::s![0, .., ..]));
-                    combined.slice_mut(ndarray::s![1, .., ..]).assign(&results.summary_stats.avg_shadow_percentage.slice(ndarray::s![0, .., ..]));
-                    combined.slice_mut(ndarray::s![2, .., ..]).assign(&results.summary_stats.max_consecutive_shadow.slice(ndarray::s![0, .., ..]));
-                    combined.slice_mut(ndarray::s![3, .., ..]).assign(&results.summary_stats.morning_shadow_hours.slice(ndarray::s![0, .., ..]));
-                    combined.slice_mut(ndarray::s![4, .., ..]).assign(&results.summary_stats.afternoon_shadow_hours.slice(ndarray::s![0, .., ..]));
-                    
+                    combined.slice_mut(ndarray::s![0, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .total_shadow_hours
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![1, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .avg_shadow_percentage
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![2, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .max_consecutive_shadow
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![3, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .morning_shadow_hours
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+                    combined.slice_mut(ndarray::s![4, .., ..]).assign(
+                        &results
+                            .summary_stats
+                            .afternoon_shadow_hours
+                            .slice(ndarray::s![0, .., ..]),
+                    );
+
                     // Add time series
-                    combined.slice_mut(ndarray::s![n_summary.., .., ..]).assign(&results.shadow_fraction);
-                    
+                    combined
+                        .slice_mut(ndarray::s![n_summary.., .., ..])
+                        .assign(&results.shadow_fraction);
+
                     // Create band descriptions for better identification
                     let mut band_descriptions = vec![
                         "Total_Shadow_Hours".to_string(),
@@ -401,12 +463,12 @@ async fn export_results(
                         "Morning_Shadow_Hours_(before_noon)".to_string(),
                         "Afternoon_Shadow_Hours_(after_noon)".to_string(),
                     ];
-                    
+
                     // Add timestamp descriptions for each time layer
                     for timestamp in &results.timestamps {
                         band_descriptions.push(timestamp.format("%Y-%m-%d_%H:%M_UTC").to_string());
                     }
-                    
+
                     // Write GeoTIFF with band descriptions
                     RasterIO::write_geotiff_with_descriptions(
                         &path,
@@ -414,34 +476,36 @@ async fn export_results(
                         &clipped.transform,
                         &clipped.projection,
                         &band_descriptions,
-                    ).map_err(|e| format!("Failed to write GeoTIFF: {}", e))?;
-                    
+                    )
+                    .map_err(|e| format!("Failed to write GeoTIFF: {}", e))?;
+
                     Ok(format!("GeoTIFF exported to: {}", path.display()))
                 }
                 "csv" => {
                     let dtm_data = RasterIO::read_raster(Path::new(&config.dtm_path))
                         .map_err(|e| format!("Failed to load DTM: {}", e))?;
-                    
-                    let polygon = config.to_polygon()
+
+                    let polygon = config
+                        .to_polygon()
                         .map_err(|e| format!("Failed to parse AOI: {}", e))?;
-                    
+
                     // Get center latitude for buffer conversion
-                    let center_lat = polygon.exterior().coords()
-                        .map(|c| c.y)
-                        .sum::<f64>() / polygon.exterior().coords().count() as f64;
-                    
+                    let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
+                        / polygon.exterior().coords().count() as f64;
+
                     let buffer_degrees = meters_to_degrees(config.buffer_meters, center_lat);
-                    
+
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
-                    
+
                     RasterIO::write_csv(
                         &path,
                         &results.shadow_fraction,
                         &results.timestamps,
                         &clipped.transform,
-                    ).map_err(|e| format!("Failed to write CSV: {}", e))?;
-                    
+                    )
+                    .map_err(|e| format!("Failed to write CSV: {}", e))?;
+
                     Ok(format!("CSV exported to: {}", path.display()))
                 }
                 _ => return Err("Unsupported format".to_string()),
@@ -452,17 +516,13 @@ async fn export_results(
 }
 
 #[tauri::command]
-async fn get_timestamps(
-    state: State<'_, AppState>,
-) -> Result<Vec<String>, String> {
+async fn get_timestamps(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let results = state.current_results.lock().unwrap();
-    
+
     match results.as_ref() {
         Some(results) => {
-            let timestamps: Vec<String> = results.timestamps
-                .iter()
-                .map(|t| t.to_rfc3339())
-                .collect();
+            let timestamps: Vec<String> =
+                results.timestamps.iter().map(|t| t.to_rfc3339()).collect();
             Ok(timestamps)
         }
         None => Err("No results available".to_string()),

@@ -21,8 +21,9 @@ impl Config {
         if self.aoi.is_empty() {
             return Err("AOI is empty".to_string());
         }
-        
-        let coords: Vec<(f64, f64)> = self.aoi
+
+        let coords: Vec<(f64, f64)> = self
+            .aoi
             .iter()
             .map(|coord| {
                 if coord.len() >= 2 {
@@ -32,11 +33,8 @@ impl Config {
                 }
             })
             .collect();
-        
-        Ok(Polygon::new(
-            geo_types::LineString::from(coords),
-            vec![],
-        ))
+
+        Ok(Polygon::new(geo_types::LineString::from(coords), vec![]))
     }
 }
 

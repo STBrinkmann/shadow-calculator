@@ -37,29 +37,30 @@ impl SunCalculator {
         let julian_day = self.julian_day(datetime);
         let equation_of_time = self.equation_of_time(julian_day);
         let declination = self.solar_declination(julian_day);
-        
+
         let solar_time = self.solar_time(datetime, equation_of_time);
         let hour_angle = 15.0 * (solar_time - 12.0);
-        
+
         let lat_rad = self.latitude.to_radians();
         let dec_rad = declination.to_radians();
         let hour_rad = hour_angle.to_radians();
-        
+
         // Solar elevation
-        let elevation = (lat_rad.sin() * dec_rad.sin() + 
-                        lat_rad.cos() * dec_rad.cos() * hour_rad.cos()).asin();
-        
+        let elevation =
+            (lat_rad.sin() * dec_rad.sin() + lat_rad.cos() * dec_rad.cos() * hour_rad.cos()).asin();
+
         // Solar azimuth
-        let azimuth = ((dec_rad.sin() * lat_rad.cos() - 
-                       dec_rad.cos() * lat_rad.sin() * hour_rad.cos()) / 
-                       elevation.cos()).acos();
-        
+        let azimuth = ((dec_rad.sin() * lat_rad.cos()
+            - dec_rad.cos() * lat_rad.sin() * hour_rad.cos())
+            / elevation.cos())
+        .acos();
+
         let azimuth_deg = if hour_angle > 0.0 {
             360.0 - azimuth.to_degrees()
         } else {
             azimuth.to_degrees()
         };
-        
+
         (azimuth_deg, elevation.to_degrees())
     }
 
@@ -75,10 +76,11 @@ impl SunCalculator {
         let a = (14 - datetime.month() as i32) / 12;
         let y = datetime.year() + 4800 - a;
         let m = datetime.month() as i32 + 12 * a - 3;
-        
-        datetime.day() as f64 + (153 * m + 2) as f64 / 5.0 + 
-        365.0 * y as f64 + (y / 4) as f64 - (y / 100) as f64 + 
-        (y / 400) as f64 - 32045.0
+
+        datetime.day() as f64 + (153 * m + 2) as f64 / 5.0 + 365.0 * y as f64 + (y / 4) as f64
+            - (y / 100) as f64
+            + (y / 400) as f64
+            - 32045.0
     }
 
     fn equation_of_time(&self, julian_day: f64) -> f64 {
@@ -86,7 +88,7 @@ impl SunCalculator {
         let l = (280.460 + 0.9856474 * n) % 360.0;
         let g = ((357.528 + 0.9856003 * n) % 360.0).to_radians();
         let lambda = (l + 1.915 * g.sin() + 0.020 * (2.0 * g).sin()).to_radians();
-        
+
         4.0 * (l - 0.0057183 - lambda.to_degrees())
     }
 
@@ -95,7 +97,7 @@ impl SunCalculator {
         let l = (280.460 + 0.9856474 * n) % 360.0;
         let g = ((357.528 + 0.9856003 * n) % 360.0).to_radians();
         let lambda = (l + 1.915 * g.sin() + 0.020 * (2.0 * g).sin()).to_radians();
-        
+
         let obliquity = (23.439 - 0.0000004 * n).to_radians();
         (obliquity.sin() * lambda.sin()).asin().to_degrees()
     }
