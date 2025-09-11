@@ -391,7 +391,7 @@ impl ShadowEngine {
 
         while current <= end {
             timestamps.push(current);
-            current = current + chrono::Duration::hours(self.config.hour_interval as i64);
+            current += chrono::Duration::hours(self.config.hour_interval as i64);
         }
 
         timestamps

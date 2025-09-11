@@ -508,7 +508,7 @@ async fn export_results(
 
                     Ok(format!("CSV exported to: {}", path.display()))
                 }
-                _ => return Err("Unsupported format".to_string()),
+                _ => Err("Unsupported format".to_string()),
             }
         }
         _ => Err("No results available to export".to_string()),

@@ -18,7 +18,7 @@ impl RasterIO {
         let no_data_value = band.no_data_value();
         let (width, height) = band.size();
 
-        let mut data = vec![0f32; (width * height) as usize];
+        let mut data = vec![0f32; width * height];
         band.read_into_slice(
             (0, 0),
             (width, height),
@@ -27,7 +27,7 @@ impl RasterIO {
             Some(ResampleAlg::NearestNeighbour),
         )?;
 
-        let array = Array2::from_shape_vec((height as usize, width as usize), data)
+        let array = Array2::from_shape_vec((height, width), data)
             .map_err(|e| ShadowError::Config(format!("Failed to create array: {}", e)))?;
 
         Ok(RasterData {
