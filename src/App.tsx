@@ -288,34 +288,60 @@ function App() {
               
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-300">Solar Position Precision</label>
-                <select
-                  value={config.angle_precision}
-                  onChange={(e) => setConfig(prev => ({ ...prev, angle_precision: Number(e.target.value) }))}
-                  disabled={isCalculating}
-                  className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ color: 'white' }}
-                >
-                  <option value={0.01} style={{ color: 'black', backgroundColor: 'white' }}>High (0.01°)</option>
-                  <option value={0.1} style={{ color: 'black', backgroundColor: 'white' }}>Normal (0.1°)</option>
-                  <option value={0.5} style={{ color: 'black', backgroundColor: 'white' }}>Fast (0.5°)</option>
-                  <option value={1.0} style={{ color: 'black', backgroundColor: 'white' }}>Draft (1.0°)</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={config.angle_precision}
+                    onChange={(e) => setConfig(prev => ({ ...prev, angle_precision: Number(e.target.value) }))}
+                    disabled={isCalculating}
+                    className="w-full px-3 py-2 pr-8 rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ 
+                      backgroundColor: '#374151', 
+                      color: '#f9fafb',
+                      WebkitAppearance: 'none',
+                      MozAppearance: 'none',
+                      appearance: 'none'
+                    }}
+                  >
+                    <option value={0.01} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>High (0.01°)</option>
+                    <option value={0.1} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Normal (0.1°)</option>
+                    <option value={0.5} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Fast (0.5°)</option>
+                    <option value={1.0} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Draft (1.0°)</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
               </div>
               
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-300">Rendering Quality</label>
-                <select
-                  value={config.shadow_quality}
-                  onChange={(e) => setConfig(prev => ({ ...prev, shadow_quality: e.target.value as ShadowQuality }))}
-                  disabled={isCalculating}
-                  className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ color: 'white' }}
-                >
-                  <option value="Fast" style={{ color: 'black', backgroundColor: 'white' }}>Fast</option>
-                  <option value="Normal" style={{ color: 'black', backgroundColor: 'white' }}>Normal</option>
-                  <option value="High" style={{ color: 'black', backgroundColor: 'white' }}>High</option>
-                  <option value="Scientific" style={{ color: 'black', backgroundColor: 'white' }}>Scientific</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={config.shadow_quality}
+                    onChange={(e) => setConfig(prev => ({ ...prev, shadow_quality: e.target.value as ShadowQuality }))}
+                    disabled={isCalculating}
+                    className="w-full px-3 py-2 pr-8 rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ 
+                      backgroundColor: '#374151', 
+                      color: '#f9fafb',
+                      WebkitAppearance: 'none',
+                      MozAppearance: 'none',
+                      appearance: 'none'
+                    }}
+                  >
+                    <option value="Fast" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Fast</option>
+                    <option value="Normal" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Normal</option>
+                    <option value="High" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>High</option>
+                    <option value="Scientific" style={{ backgroundColor: '#f9fafb', color: '#111827' }}>Scientific</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

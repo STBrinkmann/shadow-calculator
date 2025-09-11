@@ -67,12 +67,12 @@ export default function PerformanceSettings({
               <p className="text-gray-500">Loading CPU information...</p>
             ) : cpuInfo ? (
               <div className="space-y-3">
-                <div className="text-sm text-gray-600">
-                  Available CPU cores: <span className="font-semibold">{cpuInfo.total_cores}</span>
+                <div className="text-sm text-gray-800" style={{ color: '#374151' }}>
+                  Available CPU cores: <span className="font-semibold" style={{ color: '#111827' }}>{cpuInfo.total_cores}</span>
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-800 mb-2" style={{ color: '#374151' }}>
                     CPU Cores to Use
                   </label>
                   <div className="space-y-2">
@@ -85,7 +85,7 @@ export default function PerformanceSettings({
                         onChange={() => handleCpuCoresChange(null)}
                         className="text-blue-600"
                       />
-                      <label htmlFor="auto-detect" className="text-sm">
+                      <label htmlFor="auto-detect" className="text-sm text-gray-800" style={{ color: '#374151' }}>
                         Auto-detect (use all {cpuInfo.total_cores} cores)
                       </label>
                     </div>
@@ -99,7 +99,7 @@ export default function PerformanceSettings({
                         onChange={() => handleCpuCoresChange(Math.max(1, Math.floor(cpuInfo.total_cores / 2)))}
                         className="text-blue-600"
                       />
-                      <label htmlFor="manual-setting" className="text-sm">
+                      <label htmlFor="manual-setting" className="text-sm text-gray-800" style={{ color: '#374151' }}>
                         Manual setting
                       </label>
                     </div>
@@ -107,7 +107,7 @@ export default function PerformanceSettings({
                     {config.cpu_cores !== undefined && (
                       <div className="ml-6 space-y-2">
                         <div className="flex items-center space-x-2">
-                          <span className="text-sm text-gray-600">Cores:</span>
+                          <span className="text-sm text-gray-800" style={{ color: '#374151' }}>Cores:</span>
                           <input
                             type="range"
                             min="1"
@@ -116,11 +116,11 @@ export default function PerformanceSettings({
                             onChange={(e) => handleCpuCoresChange(parseInt(e.target.value))}
                             className="flex-1"
                           />
-                          <span className="font-semibold text-sm min-w-[2ch]">
+                          <span className="font-semibold text-sm min-w-[2ch] text-gray-800" style={{ color: '#111827' }}>
                             {config.cpu_cores}
                           </span>
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-gray-600" style={{ color: '#4b5563' }}>
                           Using {config.cpu_cores} of {cpuInfo.total_cores} available cores
                         </div>
                       </div>

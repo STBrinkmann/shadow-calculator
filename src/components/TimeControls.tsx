@@ -72,21 +72,34 @@ const TimeControls: React.FC<TimeControlsProps> = ({ onConfigChange, config: _co
           <ClockIcon className="inline h-4 w-4 mr-1" />
           Time Interval
         </label>
-        <select
-          value={hourInterval}
-          onChange={(e) => setHourInterval(Number(e.target.value))}
-          disabled={disabled}
-          className="w-full px-3 py-2 bg-gray-700 text-white rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ color: 'white' }}
-        >
-          <option value={0.5} style={{ color: 'black', backgroundColor: 'white' }}>30 minutes</option>
-          <option value={1} style={{ color: 'black', backgroundColor: 'white' }}>1 hour</option>
-          <option value={2} style={{ color: 'black', backgroundColor: 'white' }}>2 hours</option>
-          <option value={3} style={{ color: 'black', backgroundColor: 'white' }}>3 hours</option>
-          <option value={6} style={{ color: 'black', backgroundColor: 'white' }}>6 hours</option>
-          <option value={12} style={{ color: 'black', backgroundColor: 'white' }}>12 hours</option>
-          <option value={24} style={{ color: 'black', backgroundColor: 'white' }}>24 hours</option>
-        </select>
+        <div className="relative">
+          <select
+            value={hourInterval}
+            onChange={(e) => setHourInterval(Number(e.target.value))}
+            disabled={disabled}
+            className="w-full px-3 py-2 pr-8 rounded-md border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ 
+              backgroundColor: '#374151', 
+              color: '#f9fafb',
+              WebkitAppearance: 'none',
+              MozAppearance: 'none',
+              appearance: 'none'
+            }}
+          >
+            <option value={0.5} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>30 minutes</option>
+            <option value={1} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>1 hour</option>
+            <option value={2} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>2 hours</option>
+            <option value={3} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>3 hours</option>
+            <option value={6} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>6 hours</option>
+            <option value={12} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>12 hours</option>
+            <option value={24} style={{ backgroundColor: '#f9fafb', color: '#111827' }}>24 hours</option>
+          </select>
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </div>
       </div>
 
       <div className="p-3 bg-blue-800 bg-opacity-20 rounded-md border border-blue-600">
