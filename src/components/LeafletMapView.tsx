@@ -290,33 +290,33 @@ const LeafletMapView: React.FC<MapViewProps> = ({
         let r, g, b, a;
         
         if (shadowValue <= 0.5) {
-          // Low shadow areas (0-50%): Sand/white tones with high transparency
+          // Low shadow areas (0-50%): Sand/white tones with moderate transparency
           const t = shadowValue / 0.5;
           r = Math.round(255 - t * 35);   // 255 -> 220 (stay light/sandy)
           g = Math.round(250 - t * 30);   // 250 -> 220 (warm sand color)
           b = Math.round(235 - t * 65);   // 235 -> 170 (slight brown tint)
-          a = Math.round(20 + t * 60);    // Very transparent: 20 -> 80
+          a = Math.round(60 + t * 80);    // More visible: 60 -> 140 (24%-55% opacity)
         } else if (shadowValue < 0.7) {
           // Medium shadow: Transition from sand to orange
           const t = (shadowValue - 0.5) / 0.2;
           r = Math.round(220 + t * 35);   // 220 -> 255
           g = Math.round(220 - t * 70);   // 220 -> 150
           b = Math.round(170 - t * 170);  // 170 -> 0
-          a = Math.round(80 + t * 80);    // 80 -> 160
+          a = Math.round(140 + t * 60);   // 140 -> 200 (55%-78% opacity)
         } else if (shadowValue < 0.85) {
           // Heavy shadow: Orange to red
           const t = (shadowValue - 0.7) / 0.15;
           r = 255;                        // Stay full red
           g = Math.round(150 - t * 90);   // 150 -> 60
           b = Math.round(t * 30);         // 0 -> 30
-          a = Math.round(160 + t * 60);   // 160 -> 220
+          a = Math.round(200 + t * 35);   // 200 -> 235 (78%-92% opacity)
         } else {
           // Very heavy shadow: Red to dark purple
           const t = (shadowValue - 0.85) / 0.15;
           r = Math.round(255 - t * 155);  // 255 -> 100
           g = Math.round(60 - t * 40);    // 60 -> 20
           b = Math.round(30 + t * 120);   // 30 -> 150
-          a = Math.round(220 + t * 35);   // 220 -> 255 (fully opaque for highest shadows)
+          a = Math.round(235 + t * 20);   // 235 -> 255 (92%-100% opacity)
         }
         
         imageData.data[idx] = r;
