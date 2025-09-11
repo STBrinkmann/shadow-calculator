@@ -517,6 +517,12 @@ impl ShadowEngine {
         let total_available_solar: f32 = daily_solar_hours.values().map(|&x| x as f32).sum();
         let avg_daily_solar = if total_analysis_days > 0.0 { total_available_solar / total_analysis_days } else { 0.0 };
 
+        println!("Solar calculation debug:");
+        println!("  Total analysis days: {}", total_analysis_days);
+        println!("  Total available solar hours: {}", total_available_solar);
+        println!("  Average daily solar hours: {}", avg_daily_solar);
+        println!("  Number of timestamps: {}", timestamps.len());
+
         // Create arrays for new statistics
         let mut total_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
         let mut morning_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
@@ -535,39 +541,30 @@ impl ShadowEngine {
             .map(|&(row, col)| {
                 let cell_series = shadow_fraction.slice(s![.., row, col]);
 
-                // Solar-hour weighted shadow calculations
-                let mut weighted_shadow_hours = 0.0;
-                let mut morning_weighted = 0.0;
-                let mut afternoon_weighted = 0.0;
-                let mut _weight_sum = 0.0;
+                // Calculate total shadow hours and morning/afternoon split
+                let mut total_shadow_hours_cell = 0.0;
+                let mut morning_shadow_hours_cell = 0.0;
+                let mut afternoon_shadow_hours_cell = 0.0;
 
-                // Calculate weights based on solar hour density for each timestamp
+                // Calculate shadow hours for each timestamp (simple approach)
                 for (t_idx, &timestamp) in timestamps.iter().enumerate() {
-                    let date = timestamp.date_naive();
-                    let daily_solar = daily_solar_hours.get(&date).unwrap_or(&0.0);
-                    
-                    if *daily_solar > 0.0 {
-                        // Weight represents the portion of solar day this timestamp represents
-                        let weight = self.config.hour_interval / (*daily_solar as f32);
-                        let shadow_contribution = cell_series[t_idx] * weight * (*daily_solar as f32);
-                        
-                        weighted_shadow_hours += shadow_contribution;
-                        _weight_sum += weight;
+                    let shadow_contribution = cell_series[t_idx] * self.config.hour_interval;
+                    total_shadow_hours_cell += shadow_contribution;
 
-                        // Morning vs afternoon using solar noon instead of 12:00
-                        if let Some(&solar_noon) = solar_noon_times.get(&date) {
-                            if timestamp <= solar_noon {
-                                morning_weighted += shadow_contribution;
-                            } else {
-                                afternoon_weighted += shadow_contribution;
-                            }
+                    // Morning vs afternoon using solar noon instead of 12:00
+                    let date = timestamp.date_naive();
+                    if let Some(&solar_noon) = solar_noon_times.get(&date) {
+                        if timestamp <= solar_noon {
+                            morning_shadow_hours_cell += shadow_contribution;
                         } else {
-                            // Fallback to 12:00 if solar noon calculation fails
-                            if timestamp.hour() < 12 {
-                                morning_weighted += shadow_contribution;
-                            } else {
-                                afternoon_weighted += shadow_contribution;
-                            }
+                            afternoon_shadow_hours_cell += shadow_contribution;
+                        }
+                    } else {
+                        // Fallback to 12:00 if solar noon calculation fails
+                        if timestamp.hour() < 12 {
+                            morning_shadow_hours_cell += shadow_contribution;
+                        } else {
+                            afternoon_shadow_hours_cell += shadow_contribution;
                         }
                     }
                 }
@@ -584,14 +581,14 @@ impl ShadowEngine {
                     }
                 }
 
-                // Solar efficiency: percentage of available solar hours that are not shadowed
+                // Solar efficiency: percentage of total available solar hours that are not shadowed
                 let efficiency = if total_available_solar > 0.0 {
-                    ((total_available_solar - weighted_shadow_hours) / total_available_solar * 100.0).max(0.0)
+                    ((total_available_solar - total_shadow_hours_cell) / total_available_solar * 100.0).max(0.0)
                 } else {
                     0.0
                 };
 
-                (weighted_shadow_hours, morning_weighted, afternoon_weighted, max_consec, efficiency)
+                (total_shadow_hours_cell, morning_shadow_hours_cell, afternoon_shadow_hours_cell, max_consec, efficiency)
             })
             .collect();
 
@@ -606,9 +603,13 @@ impl ShadowEngine {
             solar_efficiency[[*row, *col]] = efficiency;
         }
 
-        // Calculate average shadow percentage based on available solar hours
-        let avg_shadow_percentage = if total_available_solar > 0.0 {
-            &total_shadow_hours / total_available_solar * 100.0
+        // Calculate average shadow percentage: shadow hours / total measurement period * 100
+        // Total measurement time = number of timestamps * hour interval
+        let total_measurement_hours = timestamps.len() as f32 * self.config.hour_interval;
+        println!("  Total measurement hours: {}", total_measurement_hours);
+        
+        let avg_shadow_percentage = if total_measurement_hours > 0.0 {
+            &total_shadow_hours / total_measurement_hours * 100.0
         } else {
             Array2::<f32>::zeros((n_rows, n_cols))
         };
@@ -629,7 +630,9 @@ impl ShadowEngine {
         morning_3d.slice_mut(s![0, .., ..]).assign(&morning_shadow_hours);
         afternoon_3d.slice_mut(s![0, .., ..]).assign(&afternoon_shadow_hours);
         efficiency_3d.slice_mut(s![0, .., ..]).assign(&solar_efficiency);
+        // Each cell gets the average daily solar hours for the analysis period
         daily_solar_3d.fill(avg_daily_solar);
+        // Each cell gets total available solar hours for the entire analysis period
         total_available_3d.fill(total_available_solar);
 
         SummaryStats {
