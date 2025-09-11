@@ -30,6 +30,7 @@ interface AllSummaryData {
   avg_shadow_percentage: number[][];
   max_consecutive_shadow: number[][];
   morning_shadow_hours: number[][];
+  noon_shadow_hours: number[][];
   afternoon_shadow_hours: number[][];
   bounds: RasterBounds;
   transform: number[];
@@ -402,15 +403,22 @@ const LeafletMapView: React.FC<MapViewProps> = ({
         const totalHours = getRasterValueAtLatLng(e.latlng, allSummaryData.total_shadow_hours);
         const maxConsecutive = getRasterValueAtLatLng(e.latlng, allSummaryData.max_consecutive_shadow);
         const morningHours = getRasterValueAtLatLng(e.latlng, allSummaryData.morning_shadow_hours);
+        const noonHours = getRasterValueAtLatLng(e.latlng, allSummaryData.noon_shadow_hours);
         const afternoonHours = getRasterValueAtLatLng(e.latlng, allSummaryData.afternoon_shadow_hours);
 
         if (shadowValue !== null) {
+          // Calculate percentages based on approximate time periods
+          // Assuming morning: 6h, noon: 4h, afternoon: 6h for a typical day
+          const morningPercent = morningHours ? (morningHours * 100 / 6) : null;
+          const noonPercent = noonHours ? (noonHours * 100 / 4) : null;
+          const afternoonPercent = afternoonHours ? (afternoonHours * 100 / 6) : null;
+
           const popupContent = `
-            <div style="font-family: sans-serif; min-width: 200px;">
+            <div style="font-family: sans-serif; min-width: 240px;">
               <h4 style="margin: 0 0 12px 0; color: #333; font-size: 16px; border-bottom: 2px solid #4f46e5; padding-bottom: 4px;">
                 📊 Shadow Statistics
               </h4>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; margin-bottom: 12px;">
                 <div style="background: #f3f4f6; padding: 8px; border-radius: 4px;">
                   <div style="font-weight: bold; color: #6b7280; font-size: 11px;">AVERAGE SHADOW</div>
                   <div style="font-size: 16px; color: #1f2937; font-weight: bold;">${Math.round(shadowValue * 100)}%</div>
@@ -423,10 +431,28 @@ const LeafletMapView: React.FC<MapViewProps> = ({
                   <div style="font-weight: bold; color: #991b1b; font-size: 11px;">MAX CONSECUTIVE</div>
                   <div style="font-size: 16px; color: #991b1b; font-weight: bold;">${maxConsecutive?.toFixed(1) || 'N/A'}h</div>
                 </div>
-                <div style="background: #ecfdf5; padding: 8px; border-radius: 4px;">
-                  <div style="font-weight: bold; color: #065f46; font-size: 11px;">MORNING/AFTERNOON</div>
-                  <div style="font-size: 14px; color: #065f46; font-weight: bold;">${morningHours?.toFixed(1) || 'N/A'}h / ${afternoonHours?.toFixed(1) || 'N/A'}h</div>
+                <div style="background: #ddd6fe; padding: 8px; border-radius: 4px;">
+                  <div style="font-weight: bold; color: #5b21b6; font-size: 11px;">SOLAR EFFICIENCY</div>
+                  <div style="font-size: 16px; color: #5b21b6; font-weight: bold;">${Math.round((1 - shadowValue) * 100)}%</div>
                 </div>
+              </div>
+              <div style="background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                <h5 style="margin: 0 0 8px 0; color: #374151; font-size: 14px; font-weight: bold;">🕒 Time Period Analysis</h5>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 12px;">
+                  <div style="text-align: center; padding: 6px; background: #fef3c7; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #92400e; font-size: 10px;">MORNING</div>
+                    <div style="color: #92400e; font-weight: bold;">${morningPercent?.toFixed(0) || 'N/A'}%</div>
+                  </div>
+                  <div style="text-align: center; padding: 6px; background: #fef5e7; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #c2410c; font-size: 10px;">NOON</div>
+                    <div style="color: #c2410c; font-weight: bold;">${noonPercent?.toFixed(0) || 'N/A'}%</div>
+                  </div>
+                  <div style="text-align: center; padding: 6px; background: #ecfdf5; border-radius: 4px;">
+                    <div style="font-weight: bold; color: #065f46; font-size: 10px;">AFTERNOON</div>
+                    <div style="color: #065f46; font-weight: bold;">${afternoonPercent?.toFixed(0) || 'N/A'}%</div>
+                  </div>
+                </div>
+              </div>
               </div>
               <div style="margin-top: 8px; font-size: 11px; color: #6b7280; text-align: center;">
                 📍 Lat: ${e.latlng.lat.toFixed(5)}, Lng: ${e.latlng.lng.toFixed(5)}
