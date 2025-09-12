@@ -694,4 +694,167 @@ impl ShadowEngine {
             total_available_solar_hours: total_available_3d,
         }
     }
+
+    pub fn calculate_seasonal_analysis(
+        &self,
+        shadow_fraction: &Array3<f32>,
+        timestamps: &[chrono::DateTime<chrono::Utc>],
+    ) -> SeasonalAnalysis {
+        use crate::types::{MonthlyShadowStats, SeasonStats, SeasonalAnalysis};
+        use chrono::Datelike;
+        use std::collections::HashMap;
+
+        let (n_times, n_rows, n_cols) = shadow_fraction.dim();
+
+        // Group timestamps by month-year
+        let mut monthly_groups: HashMap<(u32, i32), Vec<usize>> = HashMap::new();
+        for (idx, timestamp) in timestamps.iter().enumerate() {
+            let month = timestamp.month();
+            let year = timestamp.year();
+            monthly_groups.entry((month, year)).or_default().push(idx);
+        }
+
+        // Calculate monthly statistics
+        let mut monthly_stats = Vec::new();
+        for ((month, year), time_indices) in monthly_groups.iter() {
+            let days_in_analysis = time_indices.len() as f32 / 24.0; // Approximate days
+
+            let mut month_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
+            let mut month_shadow_count = Array2::<f32>::zeros((n_rows, n_cols));
+            let mut month_max_consecutive = Array2::<f32>::zeros((n_rows, n_cols));
+            let mut month_solar_efficiency = Array2::<f32>::zeros((n_rows, n_cols));
+
+            // Calculate statistics for each cell
+            for row in 0..n_rows {
+                for col in 0..n_cols {
+                    let mut total_shadow = 0.0f32;
+                    let mut consecutive_shadow = 0.0f32;
+                    let mut max_consecutive = 0.0f32;
+                    let mut sunlit_hours = 0.0f32;
+
+                    for &time_idx in time_indices {
+                        let shadow_val = shadow_fraction[[time_idx, row, col]];
+
+                        if shadow_val > 0.5 {
+                            total_shadow += 1.0;
+                            consecutive_shadow += 1.0;
+                        } else {
+                            sunlit_hours += 1.0;
+                            max_consecutive = max_consecutive.max(consecutive_shadow);
+                            consecutive_shadow = 0.0;
+                        }
+                    }
+
+                    // Final check for consecutive shadows
+                    max_consecutive = max_consecutive.max(consecutive_shadow);
+
+                    month_shadow_hours[[row, col]] = total_shadow;
+                    month_shadow_count[[row, col]] = time_indices.len() as f32;
+                    month_max_consecutive[[row, col]] = max_consecutive;
+
+                    // Solar efficiency: percentage of time with good solar access
+                    if time_indices.len() > 0 {
+                        month_solar_efficiency[[row, col]] =
+                            (sunlit_hours / time_indices.len() as f32) * 100.0;
+                    }
+                }
+            }
+
+            // Calculate average shadow percentage
+            let mut avg_shadow_percentage = Array2::<f32>::zeros((n_rows, n_cols));
+            for row in 0..n_rows {
+                for col in 0..n_cols {
+                    if month_shadow_count[[row, col]] > 0.0 {
+                        avg_shadow_percentage[[row, col]] = (month_shadow_hours[[row, col]]
+                            / month_shadow_count[[row, col]])
+                            * 100.0;
+                    }
+                }
+            }
+
+            monthly_stats.push(MonthlyShadowStats {
+                month: *month,
+                year: *year,
+                total_shadow_hours: month_shadow_hours,
+                avg_shadow_percentage,
+                max_consecutive_shadow: month_max_consecutive,
+                solar_efficiency_percentage: month_solar_efficiency,
+                days_in_analysis: days_in_analysis as u32,
+            });
+        }
+
+        // Sort monthly stats by year and month
+        monthly_stats.sort_by(|a, b| (a.year, a.month).cmp(&(b.year, b.month)));
+
+        // Calculate seasonal summaries
+        let seasons = vec![
+            ("Spring", vec![3, 4, 5]),
+            ("Summer", vec![6, 7, 8]),
+            ("Fall", vec![9, 10, 11]),
+            ("Winter", vec![12, 1, 2]),
+        ];
+
+        let mut seasonal_summaries = Vec::new();
+        for (season_name, season_months) in seasons {
+            let season_months_set: std::collections::HashSet<u32> =
+                season_months.iter().cloned().collect();
+
+            // Find matching monthly stats for this season
+            let season_stats: Vec<&MonthlyShadowStats> = monthly_stats
+                .iter()
+                .filter(|ms| season_months_set.contains(&ms.month))
+                .collect();
+
+            if !season_stats.is_empty() {
+                // Aggregate seasonal data
+                let mut season_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
+                let mut season_shadow_percentage = Array2::<f32>::zeros((n_rows, n_cols));
+                let mut season_max_consecutive = Array2::<f32>::zeros((n_rows, n_cols));
+                let mut season_solar_efficiency = Array2::<f32>::zeros((n_rows, n_cols));
+                let mut total_days = 0;
+
+                for monthly_stat in &season_stats {
+                    season_shadow_hours = &season_shadow_hours + &monthly_stat.total_shadow_hours;
+                    season_shadow_percentage =
+                        &season_shadow_percentage + &monthly_stat.avg_shadow_percentage;
+                    season_solar_efficiency =
+                        &season_solar_efficiency + &monthly_stat.solar_efficiency_percentage;
+                    total_days += monthly_stat.days_in_analysis;
+
+                    // Max consecutive is the maximum across months
+                    for row in 0..n_rows {
+                        for col in 0..n_cols {
+                            season_max_consecutive[[row, col]] = season_max_consecutive[[row, col]]
+                                .max(monthly_stat.max_consecutive_shadow[[row, col]]);
+                        }
+                    }
+                }
+
+                // Average the percentage values
+                let season_count = season_stats.len() as f32;
+                season_shadow_percentage.mapv_inplace(|x| x / season_count);
+                season_solar_efficiency.mapv_inplace(|x| x / season_count);
+
+                seasonal_summaries.push(SeasonStats {
+                    season_name: season_name.to_string(),
+                    months: season_months,
+                    total_shadow_hours: season_shadow_hours,
+                    avg_shadow_percentage: season_shadow_percentage,
+                    max_consecutive_shadow: season_max_consecutive,
+                    solar_efficiency_percentage: season_solar_efficiency,
+                    total_days,
+                });
+            }
+        }
+
+        // Determine analysis period
+        let start_time = timestamps.iter().min().cloned().unwrap_or_default();
+        let end_time = timestamps.iter().max().cloned().unwrap_or_default();
+
+        SeasonalAnalysis {
+            monthly_stats,
+            seasonal_summaries,
+            analysis_period: (start_time, end_time),
+        }
+    }
 }

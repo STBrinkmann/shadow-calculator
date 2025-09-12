@@ -474,8 +474,7 @@ const LeafletMapView: React.FC<MapViewProps> = ({
           // Calculate solar day percentages (shadow hours / solar day hours * 100)
           const totalSolarDayPercent = (dailySolarHours && dailySolarHours > 0) ? 
             (totalHoursPerDay / dailySolarHours * 100) : 0;
-          const maxConsecutiveSolarPercent = (dailySolarHours && dailySolarHours > 0) ? 
-            (maxConsecutivePerDay / dailySolarHours * 100) : 0;
+          // Remove unused maxConsecutiveSolarPercent variable
           
           // Calculate percentages as portion of total shadow hours (for distribution)
           const morningPercent = (totalHoursPerDay && totalHoursPerDay > 0 && morningHoursPerDay) ? (morningHoursPerDay / totalHoursPerDay * 100) : 0;
@@ -497,7 +496,7 @@ const LeafletMapView: React.FC<MapViewProps> = ({
                 </div>
                 <div style="background: #dcfce7; padding: 8px; border-radius: 4px;">
                   <div style="font-weight: bold; color: #166534; font-size: 11px;">SUN HOURS/DAY</div>
-                  <div style="font-size: 14px; color: #166534; font-weight: bold;">${(dailySolarHours - totalHoursPerDay).toFixed(1)}h (${(100 - totalSolarDayPercent).toFixed(0)}%)</div>
+                  <div style="font-size: 14px; color: #166534; font-weight: bold;">${((dailySolarHours || 0) - totalHoursPerDay).toFixed(1)}h (${(100 - totalSolarDayPercent).toFixed(0)}%)</div>
                 </div>
                 <div style="background: #fee2e2; padding: 8px; border-radius: 4px;">
                   <div style="font-weight: bold; color: #991b1b; font-size: 11px;">MAX CONSECUTIVE</div>

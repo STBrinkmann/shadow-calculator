@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use geo_types::Polygon;
-use ndarray::Array3;
+use ndarray::{Array2, Array3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +90,35 @@ pub struct SummaryStats {
     pub solar_efficiency_percentage: Array3<f32>,
     pub daily_solar_hours: Array3<f32>,
     pub total_available_solar_hours: Array3<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonthlyShadowStats {
+    pub month: u32,
+    pub year: i32,
+    pub total_shadow_hours: Array2<f32>,
+    pub avg_shadow_percentage: Array2<f32>,
+    pub max_consecutive_shadow: Array2<f32>,
+    pub solar_efficiency_percentage: Array2<f32>,
+    pub days_in_analysis: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeasonStats {
+    pub season_name: String,
+    pub months: Vec<u32>,
+    pub total_shadow_hours: Array2<f32>,
+    pub avg_shadow_percentage: Array2<f32>,
+    pub max_consecutive_shadow: Array2<f32>,
+    pub solar_efficiency_percentage: Array2<f32>,
+    pub total_days: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeasonalAnalysis {
+    pub monthly_stats: Vec<MonthlyShadowStats>,
+    pub seasonal_summaries: Vec<SeasonStats>,
+    pub analysis_period: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
 }
 
 #[derive(Debug, thiserror::Error)]

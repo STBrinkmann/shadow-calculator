@@ -6,9 +6,10 @@ import MetadataDisplay from './components/MetadataDisplay';
 import ResultsPanel from './components/ResultsPanel';
 import ProgressModal from './components/ProgressModal';
 import PerformanceSettings from './components/PerformanceSettings';
+import SeasonalDashboard, { SeasonalDashboardInline } from './components/SeasonalDashboard';
 import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
-import { Config, ShadowQuality, UploadMode, ResultsMetadata } from './types';
+import { Config, ShadowQuality, UploadMode, ResultsMetadata, SeasonalAnalysis } from './types';
 
 interface RasterBounds {
   min_lon: number;
@@ -69,6 +70,10 @@ function App() {
   const [rasterBounds, setRasterBounds] = useState<RasterBounds | null>(null);
   const [averageShadowRaster, setAverageShadowRaster] = useState<RasterData | null>(null);
   const [allSummaryData, setAllSummaryData] = useState<AllSummaryData | null>(null);
+  const [seasonalData, setSeasonalData] = useState<SeasonalAnalysis | null>(null);
+  const [isSeasonalDashboardOpen, setIsSeasonalDashboardOpen] = useState(false);
+  const [currentView, setCurrentView] = useState<'map' | 'seasonal'>('map');
+  const [isToolsDropdownOpen, setIsToolsDropdownOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Progress state
@@ -89,6 +94,24 @@ function App() {
       unlisten.then(fn => fn());
     };
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (!target.closest('.tools-dropdown')) {
+        setIsToolsDropdownOpen(false);
+      }
+    };
+
+    if (isToolsDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isToolsDropdownOpen]);
 
   const handleModeChange = useCallback((mode: UploadMode) => {
     setUploadMode(mode);
@@ -225,6 +248,31 @@ function App() {
     }
   }, []);
 
+  const handleSeasonalAnalysis = useCallback(async () => {
+    if (!hasResults) {
+      setError('No calculation results available for seasonal analysis. Please calculate or upload shadow data first.');
+      return;
+    }
+
+    try {
+      const seasonal = await invoke<SeasonalAnalysis>('get_seasonal_analysis');
+      setSeasonalData(seasonal);
+      setCurrentView('seasonal');
+      setError('');
+    } catch (error) {
+      console.error('Failed to load seasonal analysis:', error);
+      setError(`Failed to load seasonal analysis: ${error}`);
+    }
+  }, [hasResults]);
+
+  const handleViewChange = useCallback((view: 'map' | 'seasonal') => {
+    setCurrentView(view);
+    if (view === 'map') {
+      // Reset seasonal dashboard when switching back to map
+      setIsSeasonalDashboardOpen(false);
+    }
+  }, []);
+
   const handleExport = useCallback(async (format: string) => {
     // No longer specify a path - let the backend handle it
     try {
@@ -263,17 +311,103 @@ function App() {
           </button>
         </div>
         
-        {/* Future Analysis Tools Area */}
-        <div className="mt-3 p-2 bg-gray-900 bg-opacity-50 rounded-lg border border-gray-600">
-          <div className="flex items-center text-gray-400">
+        {/* View Navigation */}
+        <div className="mt-3 flex items-center space-x-2">
+          {/* Fixed Map Tab */}
+          <button
+            onClick={() => handleViewChange('map')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center ${
+              currentView === 'map'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
             <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
             </svg>
-            <span className="text-sm">Analysis Tools</span>
-            <span className="ml-auto text-xs bg-orange-600 px-2 py-1 rounded">Coming Soon</span>
+            Map
+          </button>
+
+          {/* Analysis Tools Dropdown */}
+          <div className="relative tools-dropdown">
+            <button
+              onClick={() => setIsToolsDropdownOpen(!isToolsDropdownOpen)}
+              disabled={!hasResults}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center ${
+                currentView !== 'map'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : hasResults 
+                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    : 'bg-gray-800 text-gray-500 cursor-not-allowed opacity-60'
+              }`}
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              Analysis Tools
+              <svg className={`w-4 h-4 ml-1 transition-transform ${isToolsDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {/* Dropdown Menu */}
+            {isToolsDropdownOpen && hasResults && (
+              <div className="absolute top-full left-0 mt-1 w-56 bg-gray-800 rounded-lg shadow-xl border border-gray-600 z-50">
+                <div className="py-1">
+                  <button
+                    onClick={() => {
+                      handleSeasonalAnalysis();
+                      setIsToolsDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-3 text-sm hover:bg-gray-700 flex items-center ${
+                      currentView === 'seasonal' ? 'bg-gray-700 text-blue-400' : 'text-gray-300'
+                    }`}
+                  >
+                    <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <div>
+                      <div className="font-medium">Seasonal Analysis</div>
+                      <div className="text-xs text-gray-500">Monthly and seasonal shadow patterns</div>
+                    </div>
+                  </button>
+                  
+                  {/* Future Analysis Tools */}
+                  <div className="px-4 py-2 border-t border-gray-700">
+                    <div className="text-xs text-gray-500 mb-2">More tools coming soon</div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-600 flex items-center">
+                        <span className="w-2 h-2 bg-orange-500 rounded-full mr-2"></span>
+                        Solar Panel Optimizer
+                      </div>
+                      <div className="text-xs text-gray-600 flex items-center">
+                        <span className="w-2 h-2 bg-orange-500 rounded-full mr-2"></span>
+                        Garden Planning
+                      </div>
+                      <div className="text-xs text-gray-600 flex items-center">
+                        <span className="w-2 h-2 bg-orange-500 rounded-full mr-2"></span>
+                        Plant Recommendations
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Status Message for No Data */}
+        {!hasResults && (
+          <div className="mt-2 text-xs text-gray-500 bg-gray-900 bg-opacity-50 rounded-lg p-3 border border-gray-600">
+            <div className="flex items-center">
+              <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Calculate or upload shadow data to use analysis tools
+            </div>
+          </div>
+        )}
       </header>
       
       {error && (
@@ -503,22 +637,28 @@ function App() {
           </div>
         </aside>
         
-        <main className={`flex-1 relative ${isCalculating ? 'pointer-events-none' : ''}`}>
-          <MapView 
-            onAOIDrawn={handleAOIDrawn}
-            rasterBounds={rasterBounds}
-            averageShadowRaster={averageShadowRaster}
-            allSummaryData={allSummaryData}
-            uploadMode={uploadMode}
-          />
-          
-          {hasResults && (
-            <ResultsPanel
-              currentTimeIndex={currentTimeIndex}
-              onTimeChange={handleTimeChange}
-              shadowData={shadowData}
-              timestamps={timestamps}
-            />
+        <main className={`flex-1 flex ${isCalculating ? 'pointer-events-none' : ''}`}>
+          {currentView === 'map' ? (
+            <div className="flex-1 relative">
+              <MapView 
+                onAOIDrawn={handleAOIDrawn}
+                rasterBounds={rasterBounds}
+                averageShadowRaster={averageShadowRaster}
+                allSummaryData={allSummaryData}
+                uploadMode={uploadMode}
+              />
+              
+              {hasResults && (
+                <ResultsPanel
+                  currentTimeIndex={currentTimeIndex}
+                  onTimeChange={handleTimeChange}
+                  shadowData={shadowData}
+                  timestamps={timestamps}
+                />
+              )}
+            </div>
+          ) : (
+            <SeasonalDashboardInline data={seasonalData} />
           )}
         </main>
       </div>
@@ -539,6 +679,14 @@ function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />
+
+      {/* Seasonal Analysis Dashboard */}
+      {isSeasonalDashboardOpen && (
+        <SeasonalDashboard
+          data={seasonalData}
+          onClose={() => setIsSeasonalDashboardOpen(false)}
+        />
+      )}
     </div>
   );
 }
