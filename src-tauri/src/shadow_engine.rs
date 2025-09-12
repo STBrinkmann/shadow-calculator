@@ -21,6 +21,8 @@ pub struct ShadowEngine {
     dsm: Array2<f32>,
     heights: Array2<f32>,
     resolution: f64,
+    transform: [f64; 6],
+    aoi_polygon: geo_types::Polygon<f64>,
     sun_calculator: Arc<Mutex<SunCalculator>>,
     config: Config,
     app_handle: Option<AppHandle>,
@@ -28,7 +30,7 @@ pub struct ShadowEngine {
 
 impl ShadowEngine {
     #[allow(dead_code)]
-    pub fn new(dtm: Array2<f32>, dsm: Array2<f32>, resolution: f64, config: Config) -> Self {
+    pub fn new(dtm: Array2<f32>, dsm: Array2<f32>, resolution: f64, transform: [f64; 6], config: Config) -> Self {
         let heights = &dsm - &dtm;
         let polygon = config.to_polygon().unwrap_or(geo_types::Polygon::new(
             geo_types::LineString::from(vec![
@@ -49,10 +51,12 @@ impl ShadowEngine {
         )));
 
         Self {
-            _dtm: dtm, // Store with underscore to show it's kept but not used later
+            _dtm: dtm,
             dsm,
             heights,
             resolution,
+            transform,
+            aoi_polygon: polygon,
             sun_calculator,
             config,
             app_handle: None,
@@ -63,6 +67,7 @@ impl ShadowEngine {
         dtm: Array2<f32>,
         dsm: Array2<f32>,
         resolution: f64,
+        transform: [f64; 6],
         config: Config,
         app_handle: AppHandle,
     ) -> Self {
@@ -102,6 +107,8 @@ impl ShadowEngine {
             dsm,
             heights,
             resolution,
+            transform,
+            aoi_polygon: polygon,
             sun_calculator,
             config,
             app_handle: Some(app_handle),
@@ -199,20 +206,18 @@ impl ShadowEngine {
         // Convert sun angles to ray direction
         let sun_dir = self.sun_direction(azimuth, elevation);
 
-        // Create a vector of all cell coordinates for parallel processing
-        let cell_coords: Vec<(usize, usize)> = (0..n_rows)
-            .flat_map(|row| (0..n_cols).map(move |col| (row, col)))
-            .collect();
-
-        // Process all cells in parallel
-        let shadow_values: Vec<f32> = cell_coords
+        // Get only cells that can potentially cast shadows on AOI
+        let relevant_cells = self.get_shadow_relevant_cells(azimuth, elevation);
+        
+        // Process only relevant cells in parallel (major optimization!)
+        let shadow_values: Vec<((usize, usize), f32)> = relevant_cells
             .par_iter()
-            .map(|&(row, col)| self.calculate_cell_shadow(row, col, sun_dir))
+            .map(|&(row, col)| ((row, col), self.calculate_cell_shadow(row, col, sun_dir)))
             .collect();
 
         // Assign results back to the shadow map
-        for ((row, col), &shadow_value) in cell_coords.iter().zip(shadow_values.iter()) {
-            shadow_map[[*row, *col]] = shadow_value;
+        for ((row, col), shadow_value) in shadow_values {
+            shadow_map[[row, col]] = shadow_value;
         }
 
         // Apply edge refinement based on quality setting
@@ -221,6 +226,172 @@ impl ShadowEngine {
         }
 
         shadow_map
+    }
+    
+    fn get_shadow_relevant_cells(&self, azimuth: f64, elevation: f64) -> Vec<(usize, usize)> {
+        
+        let (n_rows, n_cols) = self.heights.dim();
+        let mut relevant_cells = Vec::new();
+        
+        // Get AOI bounds in pixel coordinates
+        let aoi_bounds = self.get_aoi_pixel_bounds();
+        if aoi_bounds.is_none() {
+            // Fallback: return all cells if we can't determine AOI bounds
+            return (0..n_rows).flat_map(|row| (0..n_cols).map(move |col| (row, col))).collect();
+        }
+        
+        let (aoi_min_row, aoi_max_row, aoi_min_col, aoi_max_col) = aoi_bounds.unwrap();
+        
+        // Calculate shadow direction (opposite of sun direction)
+        let sun_azimuth_rad = azimuth.to_radians();
+        let shadow_dir_x = -sun_azimuth_rad.sin();
+        let shadow_dir_y = sun_azimuth_rad.cos();
+        
+        // Maximum shadow distance based on terrain and sun angle
+        let max_shadow_distance_pixels = (self.config.buffer_meters.unwrap_or(1000.0) / self.resolution) as i32;
+        
+        // Check each cell to see if it could cast a shadow on the AOI
+        for row in 0..n_rows {
+            for col in 0..n_cols {
+                // Skip cells with minimal height
+                if self.heights[[row, col]] < 0.5 {
+                    continue;
+                }
+                
+                // For cells inside AOI, always include them
+                if row >= aoi_min_row && row <= aoi_max_row && 
+                   col >= aoi_min_col && col <= aoi_max_col {
+                    relevant_cells.push((row, col));
+                    continue;
+                }
+                
+                // For cells outside AOI, check if they could cast shadows into AOI
+                if self.can_cast_shadow_into_aoi(
+                    row, col,
+                    aoi_min_row, aoi_max_row, aoi_min_col, aoi_max_col,
+                    shadow_dir_x, shadow_dir_y,
+                    max_shadow_distance_pixels,
+                    elevation
+                ) {
+                    relevant_cells.push((row, col));
+                }
+            }
+        }
+        
+        let total_cells = n_rows * n_cols;
+        let relevant_count = relevant_cells.len();
+        println!("Shadow optimization: Processing {} of {} cells ({:.1}% reduction)",
+                relevant_count, total_cells,
+                100.0 * (1.0 - relevant_count as f64 / total_cells as f64));
+        
+        relevant_cells
+    }
+    
+    fn get_aoi_pixel_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        let (n_rows, n_cols) = self.heights.dim();
+        
+        // Get AOI bounds in world coordinates
+        let coords: Vec<_> = self.aoi_polygon.exterior().coords().collect();
+        let aoi_min_x = coords.iter().map(|c| c.x).fold(f64::INFINITY, f64::min);
+        let aoi_max_x = coords.iter().map(|c| c.x).fold(f64::NEG_INFINITY, f64::max);
+        let aoi_min_y = coords.iter().map(|c| c.y).fold(f64::INFINITY, f64::min);
+        let aoi_max_y = coords.iter().map(|c| c.y).fold(f64::NEG_INFINITY, f64::max);
+        
+        // Convert to pixel coordinates
+        let inv_transform = self.invert_transform(&self.transform);
+        let (min_col, max_row) = self.world_to_pixel(aoi_min_x, aoi_min_y, &inv_transform);
+        let (max_col, min_row) = self.world_to_pixel(aoi_max_x, aoi_max_y, &inv_transform);
+        
+        // Ensure within raster bounds
+        let min_row = min_row.max(0) as usize;
+        let min_col = min_col.max(0) as usize;
+        let max_row = max_row.min(n_rows as i32 - 1) as usize;
+        let max_col = max_col.min(n_cols as i32 - 1) as usize;
+        
+        Some((min_row, max_row, min_col, max_col))
+    }
+    
+    fn can_cast_shadow_into_aoi(
+        &self,
+        cell_row: usize, cell_col: usize,
+        aoi_min_row: usize, aoi_max_row: usize,
+        aoi_min_col: usize, aoi_max_col: usize,
+        shadow_dir_x: f64, shadow_dir_y: f64,
+        max_distance: i32,
+        elevation: f64,
+    ) -> bool {
+        // Quick distance check
+        let dist_to_aoi = self.distance_to_aoi_bounds(
+            cell_row as i32, cell_col as i32,
+            aoi_min_row as i32, aoi_max_row as i32,
+            aoi_min_col as i32, aoi_max_col as i32
+        );
+        
+        if dist_to_aoi > max_distance {
+            return false;
+        }
+        
+        // Direction check: is the cell on the sun side of the AOI?
+        let aoi_center_row = (aoi_min_row + aoi_max_row) / 2;
+        let aoi_center_col = (aoi_min_col + aoi_max_col) / 2;
+        
+        let to_aoi_x = aoi_center_col as f64 - cell_col as f64;
+        let to_aoi_y = aoi_center_row as f64 - cell_row as f64;
+        
+        // Dot product to check if shadow direction aligns with direction to AOI
+        let alignment = shadow_dir_x * to_aoi_x + shadow_dir_y * to_aoi_y;
+        if alignment < 0.0 {
+            return false; // Cell is on wrong side to cast shadow
+        }
+        
+        // Height check: can this cell's height cast a shadow that far?
+        let cell_height = self.heights[[cell_row, cell_col]] as f64;
+        let required_height = dist_to_aoi as f64 * self.resolution * elevation.to_radians().tan();
+        
+        cell_height >= required_height * 0.5 // Allow some margin
+    }
+    
+    fn distance_to_aoi_bounds(
+        &self,
+        row: i32, col: i32,
+        min_row: i32, max_row: i32,
+        min_col: i32, max_col: i32,
+    ) -> i32 {
+        let row_dist = if row < min_row {
+            min_row - row
+        } else if row > max_row {
+            row - max_row
+        } else {
+            0
+        };
+        
+        let col_dist = if col < min_col {
+            min_col - col
+        } else if col > max_col {
+            col - max_col
+        } else {
+            0
+        };
+        
+        ((row_dist * row_dist + col_dist * col_dist) as f64).sqrt() as i32
+    }
+    
+    fn invert_transform(&self, transform: &[f64; 6]) -> [f64; 6] {
+        let det = transform[1] * transform[5] - transform[2] * transform[4];
+        [
+            -transform[0] * transform[5] / det + transform[2] * transform[3] / det,
+            transform[5] / det,
+            -transform[2] / det,
+            transform[0] * transform[4] / det - transform[1] * transform[3] / det,
+            -transform[4] / det,
+            transform[1] / det,
+        ]
+    }
+    
+    fn world_to_pixel(&self, x: f64, y: f64, inv_transform: &[f64; 6]) -> (i32, i32) {
+        let col = inv_transform[0] + inv_transform[1] * x + inv_transform[2] * y;
+        let row = inv_transform[3] + inv_transform[4] * x + inv_transform[5] * y;
+        (col.round() as i32, row.round() as i32)
     }
 
     fn calculate_cell_shadow(&self, row: usize, col: usize, sun_dir: (f64, f64, f64)) -> f32 {
@@ -233,7 +404,7 @@ impl ShadowEngine {
         let mut current_z = cell_height as f64;
 
         let step_size = 0.5;
-        let max_distance = self.config.buffer_meters / self.resolution;
+        let max_distance = self.config.buffer_meters.unwrap_or(1000.0) / self.resolution;
         let mut distance = 0.0;
 
         while distance < max_distance {
@@ -346,7 +517,7 @@ impl ShadowEngine {
         let mut current_z = cell_height as f64;
 
         let step_size = 0.25;
-        let max_distance = self.config.buffer_meters / self.resolution;
+        let max_distance = self.config.buffer_meters.unwrap_or(1000.0) / self.resolution;
         let mut distance = 0.0;
 
         while distance < max_distance {

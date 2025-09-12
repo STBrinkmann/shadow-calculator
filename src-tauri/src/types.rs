@@ -11,7 +11,7 @@ pub struct Config {
     pub start_date: String,
     pub end_date: String,
     pub hour_interval: f32,
-    pub buffer_meters: f64,
+    pub buffer_meters: Option<f64>, // Now optional - will be calculated automatically
     pub angle_precision: f64,
     pub shadow_quality: ShadowQuality,
     pub cpu_cores: Option<usize>, // Number of CPU cores to use (None = auto-detect)
