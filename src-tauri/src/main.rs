@@ -131,15 +131,23 @@ async fn calculate_shadows(
         .to_polygon()
         .map_err(|e| format!("Failed to parse AOI: {}", e))?;
 
+    // Calculate automatic buffer based on terrain and solar analysis
+    let auto_buffer_meters = RasterIO::calculate_automatic_buffer(
+        &dtm_data,
+        &dsm_data,
+        &polygon,
+        &config.start_date,
+        &config.end_date,
+    ).map_err(|e| format!("Failed to calculate automatic buffer: {}", e))?;
+
     // Convert buffer from meters to degrees (approximate)
-    // Get the center latitude for conversion
     let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
         / polygon.exterior().coords().count() as f64;
-
-    let buffer_degrees = meters_to_degrees(config.buffer_meters, center_lat);
+    let buffer_degrees = meters_to_degrees(auto_buffer_meters, center_lat);
+    
     println!(
-        "Buffer: {}m = {:.6}° at latitude {:.3}°",
-        config.buffer_meters, buffer_degrees, center_lat
+        "Automatic buffer: {:.1}m = {:.6}° at latitude {:.3}°",
+        auto_buffer_meters, buffer_degrees, center_lat
     );
 
     // Clip to AOI with buffer (now in degrees)
@@ -180,9 +188,9 @@ async fn calculate_shadows(
         center_lat
     );
 
-    // Create shadow engine with resolution in meters
+    // Create shadow engine with resolution in meters and automatic buffer
     let mut config_with_meter_buffer = config.clone();
-    config_with_meter_buffer.buffer_meters = config.buffer_meters; // Keep original meters value
+    config_with_meter_buffer.buffer_meters = Some(auto_buffer_meters);
 
     let engine = ShadowEngine::new_with_app_handle(
         dtm_2d,
@@ -466,7 +474,7 @@ async fn export_results(
                     let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
                         / polygon.exterior().coords().count() as f64;
 
-                    let buffer_degrees = meters_to_degrees(config.buffer_meters, center_lat);
+                    let buffer_degrees = meters_to_degrees(config.buffer_meters.unwrap_or(100.0), center_lat);
 
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
@@ -538,6 +546,14 @@ async fn export_results(
                         .slice_mut(ndarray::s![n_summary.., .., ..])
                         .assign(&results.shadow_fraction);
 
+                    // Apply AOI masking to exclude buffer area from results
+                    RasterIO::mask_array3_to_aoi(
+                        &mut combined,
+                        &polygon,
+                        &clipped.transform,
+                        f32::NAN,
+                    ).map_err(|e| format!("Failed to apply AOI masking: {}", e))?;
+
                     // Create band descriptions for better identification
                     let mut band_descriptions = vec![
                         "Total_Shadow_Hours".to_string(),
@@ -580,16 +596,17 @@ async fn export_results(
                     let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
                         / polygon.exterior().coords().count() as f64;
 
-                    let buffer_degrees = meters_to_degrees(config.buffer_meters, center_lat);
+                    let buffer_degrees = meters_to_degrees(config.buffer_meters.unwrap_or(100.0), center_lat);
 
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
 
-                    RasterIO::write_csv(
+                    RasterIO::write_csv_with_aoi_mask(
                         &path,
                         &results.shadow_fraction,
                         &results.timestamps,
                         &clipped.transform,
+                        &polygon,
                     )
                     .map_err(|e| format!("Failed to write CSV: {}", e))?;
 

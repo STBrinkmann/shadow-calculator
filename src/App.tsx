@@ -56,7 +56,6 @@ function App() {
     start_date: new Date().toISOString(),
     end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     hour_interval: 1,
-    buffer_meters: 50,
     angle_precision: 0.1,
     shadow_quality: 'Normal' as ShadowQuality,
   });
@@ -489,21 +488,6 @@ function App() {
               </h3>
               
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-300">
-                    Analysis Buffer
-                    <span className="text-xs text-gray-500 ml-2">(meters)</span>
-                  </label>
-                  <input
-                    type="number"
-                    value={config.buffer_meters}
-                    onChange={(e) => setConfig(prev => ({ ...prev, buffer_meters: Number(e.target.value) }))}
-                    disabled={isCalculating}
-                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ color: 'white' }}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Extra area around AOI for shadow casting</p>
-                </div>
                 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-300">Solar Position Precision</label>

@@ -269,6 +269,50 @@ impl RasterIO {
         Ok(())
     }
 
+    pub fn write_csv_with_aoi_mask(
+        path: &Path,
+        shadow_data: &Array3<f32>,
+        timestamps: &[chrono::DateTime<chrono::Utc>],
+        transform: &[f64; 6],
+        aoi: &Polygon<f64>,
+    ) -> Result<(), ShadowError> {
+        use std::io::Write;
+        use geo_types::Coord;
+        use geo::algorithm::contains::Contains;
+        let mut file = std::fs::File::create(path)?;
+
+        writeln!(file, "cell_id,lat,lon,datetime,shadow_fraction")?;
+
+        let (n_times, n_rows, n_cols) = shadow_data.dim();
+        let mut cell_id = 0;
+
+        for row in 0..n_rows {
+            for col in 0..n_cols {
+                let (lon, lat) = Self::pixel_to_world(col, row, transform);
+                let point = Coord { x: lon, y: lat };
+
+                // Only export data for points inside AOI
+                if aoi.contains(&point) {
+                    for t_idx in 0..n_times {
+                        let shadow_val = shadow_data[[t_idx, row, col]];
+                        writeln!(
+                            file,
+                            "{},{:.6},{:.6},{},{}",
+                            cell_id,
+                            lat,
+                            lon,
+                            timestamps[t_idx].to_rfc3339(),
+                            shadow_val
+                        )?;
+                    }
+                }
+                cell_id += 1;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn write_csv(
         path: &Path,
         shadow_data: &Array3<f32>,
@@ -328,6 +372,187 @@ impl RasterIO {
         let x = transform[0] + col as f64 * transform[1] + row as f64 * transform[2];
         let y = transform[3] + col as f64 * transform[4] + row as f64 * transform[5];
         (x, y)
+    }
+
+    pub fn calculate_automatic_buffer(
+        dtm: &RasterData,
+        dsm: &RasterData,
+        aoi: &Polygon<f64>,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<f64, ShadowError> {
+        use chrono::{DateTime, Utc};
+
+        // Parse dates
+        let start_dt = DateTime::parse_from_rfc3339(start_date)
+            .map_err(|e| ShadowError::Config(format!("Invalid start date: {}", e)))?
+            .with_timezone(&Utc);
+        let end_dt = DateTime::parse_from_rfc3339(end_date)
+            .map_err(|e| ShadowError::Config(format!("Invalid end date: {}", e)))?
+            .with_timezone(&Utc);
+
+        // Get AOI center for solar calculations
+        let center_lat = aoi.exterior().coords().map(|c| c.y).sum::<f64>()
+            / aoi.exterior().coords().count() as f64;
+        let center_lon = aoi.exterior().coords().map(|c| c.x).sum::<f64>()
+            / aoi.exterior().coords().count() as f64;
+
+        // Calculate terrain height difference
+        let max_height_diff = Self::calculate_max_height_difference(dtm, dsm, aoi)?;
+
+        // Calculate minimum solar elevation during analysis period
+        let min_solar_elevation = Self::calculate_min_solar_elevation(
+            center_lat, 
+            center_lon, 
+            start_dt, 
+            end_dt
+        )?;
+
+        // Calculate maximum shadow length using trigonometry
+        let max_shadow_length = if min_solar_elevation > 0.1 { // Avoid division by very small numbers
+            max_height_diff / min_solar_elevation.to_radians().tan()
+        } else {
+            // For very low sun angles, use a large default buffer
+            max_height_diff * 20.0
+        };
+
+        // Apply safety factor and reasonable bounds
+        let safety_factor = 1.2;
+        let buffer = (max_shadow_length * safety_factor).max(10.0).min(2000.0);
+
+        println!(
+            "Automatic buffer calculation: terrain_diff={:.1}m, min_elevation={:.1}°, buffer={:.1}m",
+            max_height_diff, min_solar_elevation.to_degrees(), buffer
+        );
+
+        Ok(buffer)
+    }
+
+    fn calculate_max_height_difference(
+        dtm: &RasterData,
+        dsm: &RasterData,
+        aoi: &Polygon<f64>,
+    ) -> Result<f64, ShadowError> {
+        // Get AOI bounds
+        let coords: Vec<Coord<f64>> = aoi.exterior().coords().cloned().collect();
+        let min_x = coords.iter().map(|c| c.x).fold(f64::INFINITY, f64::min);
+        let max_x = coords.iter().map(|c| c.x).fold(f64::NEG_INFINITY, f64::max);
+        let min_y = coords.iter().map(|c| c.y).fold(f64::INFINITY, f64::min);
+        let max_y = coords.iter().map(|c| c.y).fold(f64::NEG_INFINITY, f64::max);
+
+        let mut max_terrain_height = f32::NEG_INFINITY;
+        let mut min_terrain_height = f32::INFINITY;
+        let mut max_object_height = 0.0f32;
+
+        // Sample heights within and around AOI bounds
+        for row in 0..dtm.data.shape()[1] {
+            for col in 0..dtm.data.shape()[2] {
+                let (world_x, world_y) = Self::pixel_to_world(col, row, &dtm.transform);
+                
+                // Check if within expanded AOI area
+                if world_x >= min_x - 100.0 && world_x <= max_x + 100.0 &&
+                   world_y >= min_y - 100.0 && world_y <= max_y + 100.0 {
+                    
+                    let dtm_height = dtm.data[[0, row, col]];
+                    let dsm_height = dsm.data[[0, row, col]];
+
+                    if dtm_height.is_finite() && dsm_height.is_finite() {
+                        max_terrain_height = max_terrain_height.max(dtm_height);
+                        min_terrain_height = min_terrain_height.min(dtm_height);
+                        
+                        let object_height = dsm_height - dtm_height;
+                        max_object_height = max_object_height.max(object_height);
+                    }
+                }
+            }
+        }
+
+        let terrain_relief = (max_terrain_height - min_terrain_height).max(0.0);
+        let total_height_diff = (terrain_relief + max_object_height) as f64;
+
+        Ok(total_height_diff.max(5.0)) // Minimum 5m for safety
+    }
+
+    fn calculate_min_solar_elevation(
+        lat: f64,
+        lon: f64,
+        start_dt: chrono::DateTime<chrono::Utc>,
+        end_dt: chrono::DateTime<chrono::Utc>,
+    ) -> Result<f64, ShadowError> {
+        let mut sun_calc = crate::sun_position::SunCalculator::new(lat, lon, 0.1);
+        let mut min_elevation: f64 = 90.0;
+
+        // Sample key times throughout the analysis period
+        let duration = end_dt - start_dt;
+        let sample_count = 100; // Sample 100 times throughout period
+        
+        for i in 0..sample_count {
+            let fraction = i as f64 / sample_count as f64;
+            let sample_time = start_dt + chrono::Duration::nanoseconds(
+                (duration.num_nanoseconds().unwrap_or(0) as f64 * fraction) as i64
+            );
+
+            let (_, elevation) = sun_calc.get_position(&sample_time);
+            if elevation > 0.0 {
+                min_elevation = min_elevation.min(elevation);
+            }
+        }
+
+        Ok(min_elevation.max(5.0)) // Minimum 5 degrees for safety
+    }
+
+    pub fn mask_to_aoi(
+        raster: &mut RasterData,
+        aoi: &Polygon<f64>,
+    ) -> Result<(), ShadowError> {
+        use geo_types::Coord;
+        use geo::algorithm::contains::Contains;
+        
+        let (n_bands, n_rows, n_cols) = raster.data.dim();
+        
+        for band in 0..n_bands {
+            for row in 0..n_rows {
+                for col in 0..n_cols {
+                    let (world_x, world_y) = Self::pixel_to_world(col, row, &raster.transform);
+                    let point = Coord { x: world_x, y: world_y };
+                    
+                    // If point is outside AOI, set to NoData
+                    if !aoi.contains(&point) {
+                        raster.data[[band, row, col]] = raster.no_data_value.unwrap_or(f32::NAN);
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    pub fn mask_array3_to_aoi(
+        data: &mut ndarray::Array3<f32>,
+        aoi: &Polygon<f64>,
+        transform: &[f64; 6],
+        no_data_value: f32,
+    ) -> Result<(), ShadowError> {
+        use geo_types::Coord;
+        use geo::algorithm::contains::Contains;
+        
+        let (n_bands, n_rows, n_cols) = data.dim();
+        
+        for band in 0..n_bands {
+            for row in 0..n_rows {
+                for col in 0..n_cols {
+                    let (world_x, world_y) = Self::pixel_to_world(col, row, transform);
+                    let point = Coord { x: world_x, y: world_y };
+                    
+                    // If point is outside AOI, set to NoData
+                    if !aoi.contains(&point) {
+                        data[[band, row, col]] = no_data_value;
+                    }
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     fn get_buffered_bounds(polygon: &Polygon<f64>, buffer_m: f64) -> (f64, f64, f64, f64) {

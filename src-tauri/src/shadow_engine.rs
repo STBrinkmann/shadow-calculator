@@ -233,7 +233,7 @@ impl ShadowEngine {
         let mut current_z = cell_height as f64;
 
         let step_size = 0.5;
-        let max_distance = self.config.buffer_meters / self.resolution;
+        let max_distance = self.config.buffer_meters.unwrap_or(100.0) / self.resolution;
         let mut distance = 0.0;
 
         while distance < max_distance {
@@ -346,7 +346,7 @@ impl ShadowEngine {
         let mut current_z = cell_height as f64;
 
         let step_size = 0.25;
-        let max_distance = self.config.buffer_meters / self.resolution;
+        let max_distance = self.config.buffer_meters.unwrap_or(100.0) / self.resolution;
         let mut distance = 0.0;
 
         while distance < max_distance {
