@@ -140,11 +140,11 @@ async fn calculate_shadows(
         &config.end_date,
     )
     .map_err(|e| format!("Failed to calculate automatic buffer: {}", e))?;
-    
+
     // Get the center latitude for conversion
     let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
         / polygon.exterior().coords().count() as f64;
-    
+
     let buffer_degrees = meters_to_degrees(auto_buffer_meters, center_lat);
     println!(
         "Automatic buffer: {:.1}m = {:.6}° at latitude {:.3}°",
@@ -552,7 +552,7 @@ async fn export_results(
                     combined
                         .slice_mut(ndarray::s![n_summary.., .., ..])
                         .assign(&results.shadow_fraction);
-                    
+
                     // Mask results to AOI before saving
                     RasterIO::mask_results_to_aoi(
                         &mut combined,
