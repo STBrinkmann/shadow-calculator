@@ -38,4 +38,30 @@ export interface ResultsMetadata {
   };
 }
 
+export interface MonthlyShadowStats {
+  month: number;
+  year: number;
+  total_shadow_hours: number[][];
+  avg_shadow_percentage: number[][];
+  max_consecutive_shadow: number[][];
+  solar_efficiency_percentage: number[][];
+  days_in_analysis: number;
+}
+
+export interface SeasonStats {
+  season_name: string;
+  months: number[];
+  total_shadow_hours: number[][];
+  avg_shadow_percentage: number[][];
+  max_consecutive_shadow: number[][];
+  solar_efficiency_percentage: number[][];
+  total_days: number;
+}
+
+export interface SeasonalAnalysis {
+  monthly_stats: MonthlyShadowStats[];
+  seasonal_summaries: SeasonStats[];
+  analysis_period: [string, string]; // ISO 8601 datetime strings
+}
+
 export type UploadMode = 'calculate' | 'upload';

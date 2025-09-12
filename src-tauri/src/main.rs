@@ -38,6 +38,35 @@ struct RasterBounds {
     max_lat: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MonthlyShadowStatsData {
+    month: u32,
+    year: i32,
+    total_shadow_hours: Vec<Vec<f32>>,
+    avg_shadow_percentage: Vec<Vec<f32>>,
+    max_consecutive_shadow: Vec<Vec<f32>>,
+    solar_efficiency_percentage: Vec<Vec<f32>>,
+    days_in_analysis: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SeasonStatsData {
+    season_name: String,
+    months: Vec<u32>,
+    total_shadow_hours: Vec<Vec<f32>>,
+    avg_shadow_percentage: Vec<Vec<f32>>,
+    max_consecutive_shadow: Vec<Vec<f32>>,
+    solar_efficiency_percentage: Vec<Vec<f32>>,
+    total_days: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SeasonalAnalysisData {
+    monthly_stats: Vec<MonthlyShadowStatsData>,
+    seasonal_summaries: Vec<SeasonStatsData>,
+    analysis_period: (String, String), // ISO 8601 datetime strings
+}
+
 #[tauri::command]
 async fn load_rasters(
     dtm_path: String,
@@ -615,8 +644,8 @@ async fn validate_results_file(file_path: String) -> Result<ResultsMetadata, Str
         return Err("File must be a .tif or .tiff file".to_string());
     }
 
-    // Try to read the raster file with all bands
-    let raster_data = RasterIO::read_multiband_raster(path)
+    // Try to read the raster file with all bands and descriptions
+    let (raster_data, band_descriptions) = RasterIO::read_multiband_raster_with_descriptions(path)
         .map_err(|e| format!("Failed to read raster file: {}", e))?;
 
     let shape = raster_data.data.shape();
@@ -660,23 +689,52 @@ async fn validate_results_file(file_path: String) -> Result<ResultsMetadata, Str
         max_lat: max_lat.max(min_lat),
     };
 
-    // Try to extract metadata from band descriptions or timestamps
-    // For now, we'll estimate based on the number of bands
-    let num_time_bands = n_bands - 5;
-    let estimated_hour_interval = if num_time_bands > 0 {
-        // Assume a common pattern - if we have many bands, likely hourly data
-        if num_time_bands > 100 {
-            1.0
+    // Extract metadata from band descriptions
+    let num_time_bands = n_bands - 9; // First 9 bands are summary layers
+
+    let (start_date, end_date, estimated_hour_interval) = if num_time_bands > 0
+        && band_descriptions.len() > 9
+    {
+        // Parse timestamps from band descriptions (bands 9+ contain timestamp info)
+        let timestamps: Vec<chrono::DateTime<chrono::Utc>> = band_descriptions[9..]
+            .iter()
+            .filter_map(|desc| {
+                // Try to parse timestamp from description format: "YYYY-MM-DD_HH:MM_UTC"
+                chrono::DateTime::parse_from_str(
+                    &desc.replace("_UTC", " +0000"),
+                    "%Y-%m-%d_%H:%M %z",
+                )
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .or_else(|_| {
+                    // Try fallback format without timezone
+                    chrono::NaiveDateTime::parse_from_str(desc, "%Y-%m-%d_%H:%M")
+                        .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc))
+                })
+                .ok()
+            })
+            .collect();
+
+        if timestamps.len() >= 2 {
+            let start = timestamps.iter().min().unwrap();
+            let end = timestamps.iter().max().unwrap();
+            let duration = *end - *start;
+            let estimated_interval = if timestamps.len() > 1 {
+                duration.num_hours() as f64 / (timestamps.len() - 1) as f64
+            } else {
+                1.0
+            };
+
+            (start.to_rfc3339(), end.to_rfc3339(), estimated_interval)
         } else {
-            6.0
+            // Fallback to current time if parsing fails
+            let now = chrono::Utc::now().to_rfc3339();
+            (now.clone(), now, 1.0)
         }
     } else {
-        1.0
+        // No time bands, use current time
+        let now = chrono::Utc::now().to_rfc3339();
+        (now.clone(), now, 1.0)
     };
-
-    // Create estimated dates (this will be improved later when we can read band descriptions)
-    let start_date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let end_date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     Ok(ResultsMetadata {
         start_date,
@@ -695,8 +753,8 @@ async fn load_results_file(
 ) -> Result<String, String> {
     let path = Path::new(&file_path);
 
-    // Read the results file with all bands
-    let raster_data = RasterIO::read_multiband_raster(path)
+    // Read the results file with all bands and descriptions
+    let (raster_data, band_descriptions) = RasterIO::read_multiband_raster_with_descriptions(path)
         .map_err(|e| format!("Failed to read results file: {}", e))?;
 
     let shape = raster_data.data.shape();
@@ -728,10 +786,28 @@ async fn load_results_file(
         ndarray::Array3::<f32>::zeros((0, n_rows, n_cols))
     };
 
-    // Generate estimated timestamps (this could be improved by reading band descriptions)
-    let timestamps: Vec<chrono::DateTime<chrono::Utc>> = (0..num_time_bands)
-        .map(|i| chrono::Utc::now() + chrono::Duration::hours(i as i64))
-        .collect();
+    // Parse timestamps from band descriptions (bands 9+ contain timestamp info)
+    let timestamps: Vec<chrono::DateTime<chrono::Utc>> = if num_time_bands > 0 {
+        band_descriptions[9..]
+            .iter()
+            .map(|desc| {
+                // Try to parse timestamp from description format: "YYYY-MM-DD_HH:MM_UTC"
+                chrono::DateTime::parse_from_str(
+                    &desc.replace("_UTC", " +0000"),
+                    "%Y-%m-%d_%H:%M %z",
+                )
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| {
+                    // If parsing fails, try fallback format without timezone
+                    chrono::NaiveDateTime::parse_from_str(desc, "%Y-%m-%d_%H:%M")
+                        .map(|ndt| chrono::DateTime::from_naive_utc_and_offset(ndt, chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()) // Last resort fallback
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     // Create shadow results
     let results = ShadowResult {
@@ -819,6 +895,230 @@ async fn get_cpu_info() -> Result<CpuInfo, String> {
     })
 }
 
+#[tauri::command]
+async fn get_seasonal_analysis(state: State<'_, AppState>) -> Result<SeasonalAnalysisData, String> {
+    let results = state.current_results.lock().unwrap();
+
+    match results.as_ref() {
+        Some(results) => {
+            // Inline seasonal analysis calculation (simplified version)
+            use chrono::Datelike;
+            use ndarray::Array2;
+            use std::collections::HashMap;
+
+            let (n_times, n_rows, n_cols) = results.shadow_fraction.dim();
+
+            // Group timestamps by month-year
+            let mut monthly_groups: HashMap<(u32, i32), Vec<usize>> = HashMap::new();
+            for (idx, timestamp) in results.timestamps.iter().enumerate() {
+                let month = timestamp.month();
+                let year = timestamp.year();
+                monthly_groups.entry((month, year)).or_default().push(idx);
+            }
+
+            // Calculate days per month by grouping timestamps by date
+            let mut monthly_date_groups: HashMap<
+                (u32, i32),
+                std::collections::HashSet<chrono::NaiveDate>,
+            > = HashMap::new();
+            for (_idx, timestamp) in results.timestamps.iter().enumerate() {
+                let month = timestamp.month();
+                let year = timestamp.year();
+                let date = timestamp.date_naive();
+                monthly_date_groups
+                    .entry((month, year))
+                    .or_default()
+                    .insert(date);
+            }
+
+            // Calculate monthly statistics
+            let mut monthly_stats_data = Vec::new();
+            for ((month, year), time_indices) in monthly_groups.iter() {
+                let unique_dates = monthly_date_groups.get(&(*month, *year)).unwrap();
+                let days_in_analysis = unique_dates.len() as u32;
+
+                let mut month_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
+                let mut month_solar_efficiency = Array2::<f32>::zeros((n_rows, n_cols));
+                let mut month_max_consecutive = Array2::<f32>::zeros((n_rows, n_cols));
+
+                // Calculate statistics for each cell
+                for row in 0..n_rows {
+                    for col in 0..n_cols {
+                        let mut total_shadow = 0.0f32;
+                        let mut consecutive_shadow = 0.0f32;
+                        let mut max_consecutive = 0.0f32;
+                        let mut sunlit_hours = 0.0f32;
+
+                        for &time_idx in time_indices {
+                            let shadow_val = results.shadow_fraction[[time_idx, row, col]];
+
+                            if shadow_val > 0.5 {
+                                total_shadow += 1.0;
+                                consecutive_shadow += 1.0;
+                            } else {
+                                sunlit_hours += 1.0;
+                                max_consecutive = max_consecutive.max(consecutive_shadow);
+                                consecutive_shadow = 0.0;
+                            }
+                        }
+
+                        // Final check for consecutive shadows
+                        max_consecutive = max_consecutive.max(consecutive_shadow);
+
+                        month_shadow_hours[[row, col]] = total_shadow;
+                        month_max_consecutive[[row, col]] = max_consecutive;
+
+                        // Solar efficiency: percentage of time with good solar access
+                        if time_indices.len() > 0 {
+                            month_solar_efficiency[[row, col]] =
+                                (sunlit_hours / time_indices.len() as f32) * 100.0;
+                        }
+                    }
+                }
+
+                // Calculate average shadow percentage
+                let mut avg_shadow_percentage = Array2::<f32>::zeros((n_rows, n_cols));
+                for row in 0..n_rows {
+                    for col in 0..n_cols {
+                        if time_indices.len() > 0 {
+                            avg_shadow_percentage[[row, col]] = (month_shadow_hours[[row, col]]
+                                / time_indices.len() as f32)
+                                * 100.0;
+                        }
+                    }
+                }
+
+                monthly_stats_data.push(MonthlyShadowStatsData {
+                    month: *month,
+                    year: *year,
+                    total_shadow_hours: month_shadow_hours
+                        .outer_iter()
+                        .map(|row| row.to_vec())
+                        .collect(),
+                    avg_shadow_percentage: avg_shadow_percentage
+                        .outer_iter()
+                        .map(|row| row.to_vec())
+                        .collect(),
+                    max_consecutive_shadow: month_max_consecutive
+                        .outer_iter()
+                        .map(|row| row.to_vec())
+                        .collect(),
+                    solar_efficiency_percentage: month_solar_efficiency
+                        .outer_iter()
+                        .map(|row| row.to_vec())
+                        .collect(),
+                    days_in_analysis,
+                });
+            }
+
+            // Sort monthly stats by year and month
+            monthly_stats_data.sort_by(|a, b| (a.year, a.month).cmp(&(b.year, b.month)));
+
+            // Calculate seasonal summaries by aggregating monthly data
+            let seasons = vec![
+                ("Spring", vec![3, 4, 5]),
+                ("Summer", vec![6, 7, 8]),
+                ("Fall", vec![9, 10, 11]),
+                ("Winter", vec![12, 1, 2]),
+            ];
+
+            let mut seasonal_summaries_data = Vec::new();
+            for (season_name, season_months) in seasons {
+                let season_months_set: std::collections::HashSet<u32> =
+                    season_months.iter().cloned().collect();
+
+                // Find matching monthly stats for this season
+                let season_monthly_stats: Vec<&MonthlyShadowStatsData> = monthly_stats_data
+                    .iter()
+                    .filter(|ms| season_months_set.contains(&ms.month))
+                    .collect();
+
+                if !season_monthly_stats.is_empty() && n_rows > 0 && n_cols > 0 {
+                    // Aggregate seasonal data
+                    let mut season_shadow_hours = Array2::<f32>::zeros((n_rows, n_cols));
+                    let mut season_shadow_percentage = Array2::<f32>::zeros((n_rows, n_cols));
+                    let mut season_max_consecutive = Array2::<f32>::zeros((n_rows, n_cols));
+                    let mut season_solar_efficiency = Array2::<f32>::zeros((n_rows, n_cols));
+                    let mut total_days = 0;
+
+                    for monthly_stat in &season_monthly_stats {
+                        // Add to totals
+                        for row in 0..n_rows {
+                            for col in 0..n_cols {
+                                season_shadow_hours[[row, col]] +=
+                                    monthly_stat.total_shadow_hours[row][col];
+                                season_shadow_percentage[[row, col]] +=
+                                    monthly_stat.avg_shadow_percentage[row][col];
+                                season_solar_efficiency[[row, col]] +=
+                                    monthly_stat.solar_efficiency_percentage[row][col];
+
+                                // Max consecutive is the maximum across months
+                                season_max_consecutive[[row, col]] = season_max_consecutive
+                                    [[row, col]]
+                                .max(monthly_stat.max_consecutive_shadow[row][col]);
+                            }
+                        }
+                        total_days += monthly_stat.days_in_analysis;
+                    }
+
+                    // Average the percentage values
+                    let season_count = season_monthly_stats.len() as f32;
+                    for row in 0..n_rows {
+                        for col in 0..n_cols {
+                            season_shadow_percentage[[row, col]] /= season_count;
+                            season_solar_efficiency[[row, col]] /= season_count;
+                        }
+                    }
+
+                    seasonal_summaries_data.push(SeasonStatsData {
+                        season_name: season_name.to_string(),
+                        months: season_months,
+                        total_shadow_hours: season_shadow_hours
+                            .outer_iter()
+                            .map(|row| row.to_vec())
+                            .collect(),
+                        avg_shadow_percentage: season_shadow_percentage
+                            .outer_iter()
+                            .map(|row| row.to_vec())
+                            .collect(),
+                        max_consecutive_shadow: season_max_consecutive
+                            .outer_iter()
+                            .map(|row| row.to_vec())
+                            .collect(),
+                        solar_efficiency_percentage: season_solar_efficiency
+                            .outer_iter()
+                            .map(|row| row.to_vec())
+                            .collect(),
+                        total_days,
+                    });
+                } else {
+                    // Empty season data
+                    seasonal_summaries_data.push(SeasonStatsData {
+                        season_name: season_name.to_string(),
+                        months: season_months,
+                        total_shadow_hours: vec![],
+                        avg_shadow_percentage: vec![],
+                        max_consecutive_shadow: vec![],
+                        solar_efficiency_percentage: vec![],
+                        total_days: 0,
+                    });
+                }
+            }
+
+            // Determine analysis period
+            let start_time = results.timestamps.iter().min().cloned().unwrap_or_default();
+            let end_time = results.timestamps.iter().max().cloned().unwrap_or_default();
+
+            Ok(SeasonalAnalysisData {
+                monthly_stats: monthly_stats_data,
+                seasonal_summaries: seasonal_summaries_data,
+                analysis_period: (start_time.to_rfc3339(), end_time.to_rfc3339()),
+            })
+        }
+        None => Err("No shadow calculation results available".to_string()),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState {
@@ -836,6 +1136,7 @@ fn main() {
             get_average_shadow_raster,
             get_all_summary_data,
             get_cpu_info,
+            get_seasonal_analysis,
             validate_results_file,
             load_results_file,
             debug_tiff_structure
