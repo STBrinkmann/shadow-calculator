@@ -297,18 +297,10 @@ impl ShadowEngine {
             }
         }
 
-        let total_cells = n_rows * n_cols;
-        let relevant_count = relevant_cells.len();
-
-        // Only log optimization stats once per calculation session
+        // Optimization stats removed from console output
         let mut logged = self.optimization_logged.lock().unwrap();
         if !*logged {
-            println!(
-                "Shadow optimization: Processing {} of {} cells ({:.1}% reduction)",
-                relevant_count,
-                total_cells,
-                100.0 * (1.0 - relevant_count as f64 / total_cells as f64)
-            );
+            // Console output removed as requested
             *logged = true;
         }
 
