@@ -45,14 +45,16 @@ interface MapViewProps {
   averageShadowRaster?: RasterData | null;
   allSummaryData?: AllSummaryData | null;
   uploadMode?: UploadMode;
+  existingAOI?: number[][];
 }
 
-const LeafletMapView: React.FC<MapViewProps> = ({ 
-  onAOIDrawn, 
+const LeafletMapView: React.FC<MapViewProps> = ({
+  onAOIDrawn,
   rasterBounds,
   averageShadowRaster,
   allSummaryData,
-  uploadMode = 'calculate'
+  uploadMode = 'calculate',
+  existingAOI
 }) => {
   const [instructionsCollapsed, setInstructionsCollapsed] = useState(false);
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -594,6 +596,33 @@ const LeafletMapView: React.FC<MapViewProps> = ({
     
     // Don't bring drawn items to front - let them stay behind for click-through
   }, [averageShadowRaster, allSummaryData]);
+
+  // Handle existing AOI restoration
+  useEffect(() => {
+    if (!map.current || !drawnItems.current) return;
+
+    if (existingAOI && existingAOI.length > 0) {
+      // Clear any existing polygons
+      drawnItems.current.clearLayers();
+
+      // Convert coordinates to Leaflet LatLng format and create polygon
+      const latlngs = existingAOI.map(coord => L.latLng(coord[1], coord[0])); // [lon, lat] -> [lat, lon]
+
+      const polygon = L.polygon(latlngs, {
+        color: '#dc2626',        // Red color
+        fillColor: '#dc2626',    // Red fill color
+        fillOpacity: 0,          // No fill
+        weight: 2,               // Line thickness
+        interactive: false,      // Disable interaction to allow clicks through
+      });
+
+      // Disable events on the polygon layer to allow click-through
+      polygon.off();
+
+      // Add to drawn items
+      drawnItems.current.addLayer(polygon);
+    }
+  }, [existingAOI]);
 
   return (
     <div 
