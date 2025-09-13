@@ -77,6 +77,7 @@ pub struct ShadowResult {
     pub shadow_fraction: Array3<f32>,
     pub timestamps: Vec<DateTime<Utc>>,
     pub summary_stats: SummaryStats,
+    pub aoi_cells: Vec<(usize, usize)>, // AOI cell coordinates for mapping
 }
 
 #[derive(Debug, Clone)]

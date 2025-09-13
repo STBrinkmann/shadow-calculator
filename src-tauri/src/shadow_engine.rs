@@ -27,6 +27,9 @@ pub struct ShadowEngine {
     config: Config,
     app_handle: Option<AppHandle>,
     optimization_logged: Arc<Mutex<bool>>,
+    // NEW: AOI-only optimization fields
+    aoi_cells: Vec<(usize, usize)>, // List of (row, col) coordinates inside AOI
+    aoi_bounds: Option<(usize, usize, usize, usize)>, // AOI bounding box for faster lookup
 }
 
 impl ShadowEngine {
@@ -57,9 +60,9 @@ impl ShadowEngine {
             config.angle_precision,
         )));
 
-        Self {
+        let mut engine = Self {
             _dtm: dtm,
-            dsm,
+            dsm: dsm.clone(),
             heights,
             resolution,
             transform,
@@ -68,7 +71,13 @@ impl ShadowEngine {
             config,
             app_handle: None,
             optimization_logged: Arc::new(Mutex::new(false)),
-        }
+            aoi_cells: Vec::new(),
+            aoi_bounds: None,
+        };
+
+        // Initialize AOI cells
+        engine.initialize_aoi_cells();
+        engine
     }
 
     pub fn new_with_app_handle(
@@ -110,9 +119,9 @@ impl ShadowEngine {
             config.angle_precision,
         )));
 
-        Self {
+        let mut engine = Self {
             _dtm: dtm,
-            dsm,
+            dsm: dsm.clone(),
             heights,
             resolution,
             transform,
@@ -121,6 +130,52 @@ impl ShadowEngine {
             config,
             app_handle: Some(app_handle),
             optimization_logged: Arc::new(Mutex::new(false)),
+            aoi_cells: Vec::new(),
+            aoi_bounds: None,
+        };
+
+        // Initialize AOI cells
+        engine.initialize_aoi_cells();
+        engine
+    }
+
+    fn initialize_aoi_cells(&mut self) {
+        use geo::algorithm::contains::Contains;
+        use geo_types::Coord;
+
+        let (n_rows, n_cols) = self.heights.dim();
+        self.aoi_cells.clear();
+
+        // First, get AOI bounding box for quick elimination
+        self.aoi_bounds = self.get_aoi_pixel_bounds_internal();
+
+        if let Some((aoi_min_row, aoi_max_row, aoi_min_col, aoi_max_col)) = self.aoi_bounds {
+            // Only check cells within bounding box
+            for row in aoi_min_row..=aoi_max_row.min(n_rows - 1) {
+                for col in aoi_min_col..=aoi_max_col.min(n_cols - 1) {
+                    // Convert pixel to world coordinates
+                    let (world_x, world_y) = self.pixel_to_world_internal(col, row);
+                    let point = Coord { x: world_x, y: world_y };
+
+                    // Check if point is inside AOI polygon
+                    if self.aoi_polygon.contains(&point) {
+                        self.aoi_cells.push((row, col));
+                    }
+                }
+            }
+        }
+
+        println!(
+            "AOI optimization: {} cells inside AOI (from total {}x{} = {} buffered cells)",
+            self.aoi_cells.len(),
+            n_rows,
+            n_cols,
+            n_rows * n_cols
+        );
+
+        if self.aoi_cells.len() > 0 {
+            let reduction_percent = 100.0 * (1.0 - self.aoi_cells.len() as f64 / (n_rows * n_cols) as f64);
+            println!("Memory reduction: {:.1}% fewer result cells needed", reduction_percent);
         }
     }
 
@@ -145,9 +200,10 @@ impl ShadowEngine {
     pub fn calculate_shadows(&self) -> Result<ShadowResult, ShadowError> {
         let timestamps = self.generate_timestamps();
         let n_times = timestamps.len();
-        let (n_rows, n_cols) = self.heights.dim();
+        let n_aoi_cells = self.aoi_cells.len();
 
-        let mut shadow_fraction = Array3::<f32>::zeros((n_times, n_rows, n_cols));
+        // Create AOI-only result array: [time, aoi_cell_index]
+        let mut shadow_fraction = Array3::<f32>::zeros((n_times, n_aoi_cells, 1));
 
         // Emit initial progress
         self.emit_progress(
@@ -178,15 +234,18 @@ impl ShadowEngine {
 
             self.emit_progress(progress, step_description, Some(n_times), Some(t_idx + 1));
 
-            let shadow_map = if elevation <= 0.0 {
-                Array2::<f32>::ones((n_rows, n_cols))
+            // Calculate shadows only for AOI cells
+            let aoi_shadow_values = if elevation <= 0.0 {
+                // All cells in shadow when sun is below horizon
+                vec![1.0; n_aoi_cells]
             } else {
-                self.calculate_shadow_map(azimuth, elevation)
+                self.calculate_aoi_shadow_values(azimuth, elevation)
             };
 
-            shadow_fraction
-                .slice_mut(s![t_idx, .., ..])
-                .assign(&shadow_map);
+            // Store results in AOI-only array
+            for (aoi_idx, shadow_value) in aoi_shadow_values.iter().enumerate() {
+                shadow_fraction[[t_idx, aoi_idx, 0]] = *shadow_value;
+            }
 
             pb.set_position(t_idx as u64 + 1);
         }
@@ -199,13 +258,210 @@ impl ShadowEngine {
             Some(n_times),
         );
 
-        let summary_stats = self.calculate_summary_stats(&shadow_fraction, &timestamps);
+        let summary_stats = self.calculate_aoi_summary_stats(&shadow_fraction, &timestamps);
 
         Ok(ShadowResult {
             shadow_fraction,
             timestamps,
             summary_stats,
+            aoi_cells: self.aoi_cells.clone(),
         })
+    }
+
+    /// Calculate shadows only for AOI cells
+    fn calculate_aoi_shadow_values(&self, azimuth: f64, elevation: f64) -> Vec<f32> {
+        let sun_dir = self.sun_direction(azimuth, elevation);
+
+        // Process only AOI cells in parallel
+        let shadow_values: Vec<f32> = self.aoi_cells
+            .par_iter()
+            .map(|&(row, col)| self.calculate_cell_shadow(row, col, sun_dir))
+            .collect();
+
+        shadow_values
+    }
+
+    /// Get the (row, col) coordinates for a given AOI cell index
+    pub fn get_aoi_cell_coords(&self, aoi_idx: usize) -> Option<(usize, usize)> {
+        if aoi_idx < self.aoi_cells.len() {
+            Some(self.aoi_cells[aoi_idx])
+        } else {
+            None
+        }
+    }
+
+    /// Calculate summary statistics for AOI-only arrays
+    fn calculate_aoi_summary_stats(
+        &self,
+        shadow_fraction: &Array3<f32>,
+        timestamps: &[chrono::DateTime<chrono::Utc>],
+    ) -> SummaryStats {
+        let (_n_times, n_aoi_cells, _) = shadow_fraction.dim();
+
+        // Pre-calculate solar data for all days in the analysis period
+        let aoi_center = self.get_aoi_center();
+        let sun_calc = crate::sun_position::SunCalculator::new(
+            aoi_center.1, // latitude
+            aoi_center.0, // longitude
+            self.config.angle_precision,
+        );
+
+        // Group timestamps by date and calculate solar hours per day
+        let mut daily_solar_hours = std::collections::HashMap::new();
+        let mut solar_noon_times = std::collections::HashMap::new();
+
+        for timestamp in timestamps {
+            let date = timestamp.date_naive();
+            if !daily_solar_hours.contains_key(&date) {
+                let solar_hours = sun_calc.get_solar_hours_for_day(timestamp);
+                let solar_noon = sun_calc.calculate_solar_noon(timestamp);
+                daily_solar_hours.insert(date, solar_hours);
+                solar_noon_times.insert(date, solar_noon);
+            }
+        }
+
+        let total_analysis_days = daily_solar_hours.len() as f32;
+        let total_available_solar: f32 = daily_solar_hours.values().map(|&x| x as f32).sum();
+        let avg_daily_solar = if total_analysis_days > 0.0 {
+            total_available_solar / total_analysis_days
+        } else {
+            0.0
+        };
+
+        // Create AOI-only arrays for statistics (1D arrays for AOI cells)
+        let mut total_shadow_hours = Array2::<f32>::zeros((n_aoi_cells, 1));
+        let mut morning_shadow_hours = Array2::<f32>::zeros((n_aoi_cells, 1));
+        let mut noon_shadow_hours = Array2::<f32>::zeros((n_aoi_cells, 1));
+        let mut afternoon_shadow_hours = Array2::<f32>::zeros((n_aoi_cells, 1));
+        let mut max_consecutive = Array2::<f32>::zeros((n_aoi_cells, 1));
+        let mut solar_efficiency = Array2::<f32>::zeros((n_aoi_cells, 1));
+
+        // Calculate statistics for all AOI cells in parallel
+        let stats_results: Vec<(f32, f32, f32, f32, f32, f32)> = (0..n_aoi_cells)
+            .into_par_iter()
+            .map(|aoi_idx| {
+                let cell_series = shadow_fraction.slice(s![.., aoi_idx, 0]);
+
+                // Calculate total shadow hours and morning/noon/afternoon split
+                let mut total_shadow_hours_cell = 0.0;
+                let mut morning_shadow_hours_cell = 0.0;
+                let mut noon_shadow_hours_cell = 0.0;
+                let mut afternoon_shadow_hours_cell = 0.0;
+
+                // Calculate shadow hours for each timestamp
+                for (t_idx, &timestamp) in timestamps.iter().enumerate() {
+                    let shadow_contribution = cell_series[t_idx] * self.config.hour_interval;
+                    total_shadow_hours_cell += shadow_contribution;
+
+                    // Morning/noon/afternoon classification using solar noon ± 2 hours
+                    let date = timestamp.date_naive();
+                    if let Some(&solar_noon) = solar_noon_times.get(&date) {
+                        let noon_start = solar_noon - chrono::Duration::hours(2);
+                        let noon_end = solar_noon + chrono::Duration::hours(2);
+
+                        if timestamp < noon_start {
+                            morning_shadow_hours_cell += shadow_contribution;
+                        } else if timestamp <= noon_end {
+                            noon_shadow_hours_cell += shadow_contribution;
+                        } else {
+                            afternoon_shadow_hours_cell += shadow_contribution;
+                        }
+                    } else {
+                        // Fallback to clock-based classification if solar noon calculation fails
+                        let hour = timestamp.hour();
+                        if hour < 10 {
+                            morning_shadow_hours_cell += shadow_contribution;
+                        } else if hour < 14 {
+                            noon_shadow_hours_cell += shadow_contribution;
+                        } else {
+                            afternoon_shadow_hours_cell += shadow_contribution;
+                        }
+                    }
+                }
+
+                // Max consecutive shadow hours
+                let mut current_consecutive = 0.0;
+                let mut max_consec = 0.0f32;
+                for &val in cell_series.iter() {
+                    if val > 0.5 {
+                        current_consecutive += self.config.hour_interval;
+                        max_consec = max_consec.max(current_consecutive);
+                    } else {
+                        current_consecutive = 0.0;
+                    }
+                }
+
+                // Solar efficiency: fraction of total available solar hours that are not shadowed
+                let efficiency = if total_available_solar > 0.0 {
+                    ((total_available_solar - total_shadow_hours_cell) / total_available_solar)
+                        .max(0.0)
+                } else {
+                    0.0
+                };
+
+                (
+                    total_shadow_hours_cell,
+                    morning_shadow_hours_cell,
+                    noon_shadow_hours_cell,
+                    afternoon_shadow_hours_cell,
+                    max_consec,
+                    efficiency,
+                )
+            })
+            .collect();
+
+        // Assign results back to arrays
+        for (aoi_idx, &(total, morning, noon, afternoon, max_consec, efficiency)) in
+            stats_results.iter().enumerate()
+        {
+            total_shadow_hours[[aoi_idx, 0]] = total;
+            morning_shadow_hours[[aoi_idx, 0]] = morning;
+            noon_shadow_hours[[aoi_idx, 0]] = noon;
+            afternoon_shadow_hours[[aoi_idx, 0]] = afternoon;
+            max_consecutive[[aoi_idx, 0]] = max_consec;
+            solar_efficiency[[aoi_idx, 0]] = efficiency;
+        }
+
+        // Calculate average shadow percentage as fraction (0.0-1.0)
+        let total_measurement_hours = timestamps.len() as f32 * self.config.hour_interval;
+        let avg_shadow_percentage = if total_measurement_hours > 0.0 {
+            &total_shadow_hours / total_measurement_hours
+        } else {
+            Array2::<f32>::zeros((n_aoi_cells, 1))
+        };
+
+        // Convert to Array3 with summary layers for AOI cells only
+        let mut total_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut avg_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut max_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut morning_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut noon_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut afternoon_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut efficiency_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut daily_solar_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+        let mut total_available_3d = Array3::<f32>::zeros((1, n_aoi_cells, 1));
+
+        total_3d.slice_mut(s![0, .., ..]).assign(&total_shadow_hours);
+        avg_3d.slice_mut(s![0, .., ..]).assign(&avg_shadow_percentage);
+        max_3d.slice_mut(s![0, .., ..]).assign(&max_consecutive);
+        morning_3d.slice_mut(s![0, .., ..]).assign(&morning_shadow_hours);
+        noon_3d.slice_mut(s![0, .., ..]).assign(&noon_shadow_hours);
+        afternoon_3d.slice_mut(s![0, .., ..]).assign(&afternoon_shadow_hours);
+        efficiency_3d.slice_mut(s![0, .., ..]).assign(&solar_efficiency);
+        daily_solar_3d.fill(avg_daily_solar);
+        total_available_3d.fill(total_available_solar);
+
+        SummaryStats {
+            total_shadow_hours: total_3d,
+            avg_shadow_percentage: avg_3d,
+            max_consecutive_shadow: max_3d,
+            morning_shadow_hours: morning_3d,
+            noon_shadow_hours: noon_3d,
+            afternoon_shadow_hours: afternoon_3d,
+            solar_efficiency_percentage: efficiency_3d,
+            daily_solar_hours: daily_solar_3d,
+            total_available_solar_hours: total_available_3d,
+        }
     }
 
     fn calculate_shadow_map(&self, azimuth: f64, elevation: f64) -> Array2<f32> {
@@ -307,7 +563,7 @@ impl ShadowEngine {
         relevant_cells
     }
 
-    fn get_aoi_pixel_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+    fn get_aoi_pixel_bounds_internal(&self) -> Option<(usize, usize, usize, usize)> {
         let (n_rows, n_cols) = self.heights.dim();
 
         // Get AOI bounds in world coordinates
@@ -329,6 +585,10 @@ impl ShadowEngine {
         let max_col = max_col.min(n_cols as i32 - 1) as usize;
 
         Some((min_row, max_row, min_col, max_col))
+    }
+
+    fn get_aoi_pixel_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        self.get_aoi_pixel_bounds_internal()
     }
 
     fn can_cast_shadow_into_aoi(
@@ -422,6 +682,12 @@ impl ShadowEngine {
         let col = inv_transform[0] + inv_transform[1] * x + inv_transform[2] * y;
         let row = inv_transform[3] + inv_transform[4] * x + inv_transform[5] * y;
         (col.round() as i32, row.round() as i32)
+    }
+
+    fn pixel_to_world_internal(&self, col: usize, row: usize) -> (f64, f64) {
+        let x = self.transform[0] + col as f64 * self.transform[1] + row as f64 * self.transform[2];
+        let y = self.transform[3] + col as f64 * self.transform[4] + row as f64 * self.transform[5];
+        (x, y)
     }
 
     fn calculate_cell_shadow(&self, row: usize, col: usize, sun_dir: (f64, f64, f64)) -> f32 {

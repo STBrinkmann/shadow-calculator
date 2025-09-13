@@ -201,100 +201,14 @@ async fn calculate_shadows(
         config_with_meter_buffer,
         app_handle,
     );
-    let mut results = engine
+    let results = engine
         .calculate_shadows()
         .map_err(|e| format!("Shadow calculation failed: {}", e))?;
 
     let num_timestamps = results.timestamps.len();
 
-    // Apply AOI masking to results before storing for visualization and analysis
-    let polygon = config
-        .to_polygon()
-        .map_err(|e| format!("Failed to parse AOI for masking: {}", e))?;
-
-    // Mask the shadow fraction data (time series)
-    RasterIO::mask_results_to_aoi(
-        &mut results.shadow_fraction,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask shadow fraction results to AOI: {}", e))?;
-
-    // Mask all summary stats layers
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.total_shadow_hours,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask total shadow hours to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.avg_shadow_percentage,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask avg shadow percentage to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.max_consecutive_shadow,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask max consecutive shadow to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.morning_shadow_hours,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask morning shadow hours to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.noon_shadow_hours,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask noon shadow hours to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.afternoon_shadow_hours,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask afternoon shadow hours to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.solar_efficiency_percentage,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask solar efficiency percentage to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.daily_solar_hours,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask daily solar hours to AOI: {}", e))?;
-
-    RasterIO::mask_results_to_aoi(
-        &mut results.summary_stats.total_available_solar_hours,
-        &polygon,
-        &dtm_clipped.transform,
-        f32::NAN,
-    )
-    .map_err(|e| format!("Failed to mask total available solar hours to AOI: {}", e))?;
-
-    println!("Results masked to AOI boundaries for visualization and analysis");
+    // Results are now calculated only for AOI cells - no masking needed
+    println!("Shadow calculation complete with AOI-optimized arrays");
 
     // Store results in state
     let mut results_guard = state.current_results.lock().unwrap();
@@ -346,7 +260,7 @@ async fn get_shadow_at_time(
 
     match results.as_ref() {
         Some(results) => {
-            let (n_times, _n_rows, _n_cols) = results.shadow_fraction.dim();
+            let (n_times, n_aoi_cells, _) = results.shadow_fraction.dim();
 
             if time_index >= n_times {
                 return Err(format!(
@@ -356,11 +270,27 @@ async fn get_shadow_at_time(
                 ));
             }
 
-            let slice = results
-                .shadow_fraction
-                .slice(ndarray::s![time_index, .., ..]);
-            let rows: Vec<Vec<f32>> = slice.outer_iter().map(|row| row.to_vec()).collect();
-            Ok(rows)
+            // Get clipped raster info for dimensions
+            let clipped_info = state.clipped_raster_info.lock().unwrap();
+            let (n_rows, n_cols) = match clipped_info.as_ref() {
+                Some(info) => info.dimensions,
+                None => return Err("No raster info available".to_string()),
+            };
+
+            // Reconstruct full raster from AOI-only data
+            let mut data: Vec<Vec<f32>> = vec![vec![f32::NAN; n_cols]; n_rows];
+
+            // Map AOI-only results back to full raster coordinates
+            for aoi_idx in 0..n_aoi_cells {
+                if aoi_idx < results.aoi_cells.len() {
+                    let (row, col) = results.aoi_cells[aoi_idx];
+                    if row < n_rows && col < n_cols {
+                        data[row][col] = results.shadow_fraction[[time_index, aoi_idx, 0]];
+                    }
+                }
+            }
+
+            Ok(data)
         }
         None => Err("No results available".to_string()),
     }
@@ -394,23 +324,20 @@ async fn get_average_shadow_raster(state: State<'_, AppState>) -> Result<RasterD
 
     match (results.as_ref(), clipped_info.as_ref()) {
         (Some(results), Some(clipped_info)) => {
-            // Get the average shadow percentage data (Band 2, index 1)
-            let avg_shadow_slice = results
-                .summary_stats
-                .avg_shadow_percentage
-                .slice(ndarray::s![0, .., ..]);
-            let data: Vec<Vec<f32>> = avg_shadow_slice
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
+            let (n_rows, n_cols) = clipped_info.dimensions;
 
-            // Verify dimensions match
-            let (n_rows, n_cols) = (data.len(), data[0].len());
-            if (n_rows, n_cols) != clipped_info.dimensions {
-                return Err(format!(
-                    "Data dimensions mismatch: expected {:?}, got ({}, {})",
-                    clipped_info.dimensions, n_rows, n_cols
-                ));
+            // Reconstruct full raster from AOI-only data
+            let mut data: Vec<Vec<f32>> = vec![vec![f32::NAN; n_cols]; n_rows];
+
+            // Map AOI-only results back to full raster coordinates
+            let (_n_times, n_aoi_cells, _) = results.summary_stats.avg_shadow_percentage.dim();
+            for aoi_idx in 0..n_aoi_cells {
+                if aoi_idx < results.aoi_cells.len() {
+                    let (row, col) = results.aoi_cells[aoi_idx];
+                    if row < n_rows && col < n_cols {
+                        data[row][col] = results.summary_stats.avg_shadow_percentage[[0, aoi_idx, 0]];
+                    }
+                }
             }
 
             Ok(RasterData {
@@ -430,70 +357,32 @@ async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryDa
 
     match (results.as_ref(), clipped_info.as_ref()) {
         (Some(results), Some(clipped_info)) => {
-            // Extract all summary layers (Band 0 index)
-            let total_shadow_hours: Vec<Vec<f32>> = results
-                .summary_stats
-                .total_shadow_hours
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
+            let (n_rows, n_cols) = clipped_info.dimensions;
+            let (_n_times, n_aoi_cells, _) = results.summary_stats.total_shadow_hours.dim();
 
-            let avg_shadow_percentage: Vec<Vec<f32>> = results
-                .summary_stats
-                .avg_shadow_percentage
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
+            // Helper function to reconstruct full raster from AOI-only data
+            let reconstruct_raster = |aoi_data: &ndarray::Array3<f32>| -> Vec<Vec<f32>> {
+                let mut data: Vec<Vec<f32>> = vec![vec![f32::NAN; n_cols]; n_rows];
+                for aoi_idx in 0..n_aoi_cells {
+                    if aoi_idx < results.aoi_cells.len() {
+                        let (row, col) = results.aoi_cells[aoi_idx];
+                        if row < n_rows && col < n_cols {
+                            data[row][col] = aoi_data[[0, aoi_idx, 0]];
+                        }
+                    }
+                }
+                data
+            };
 
-            let max_consecutive_shadow: Vec<Vec<f32>> = results
-                .summary_stats
-                .max_consecutive_shadow
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
-
-            let morning_shadow_hours: Vec<Vec<f32>> = results
-                .summary_stats
-                .morning_shadow_hours
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
-
-            let noon_shadow_hours: Vec<Vec<f32>> = results
-                .summary_stats
-                .noon_shadow_hours
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
-
-            let afternoon_shadow_hours: Vec<Vec<f32>> = results
-                .summary_stats
-                .afternoon_shadow_hours
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
-
-            let daily_solar_hours: Vec<Vec<f32>> = results
-                .summary_stats
-                .daily_solar_hours
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
-
-            let total_available_solar_hours: Vec<Vec<f32>> = results
-                .summary_stats
-                .total_available_solar_hours
-                .slice(ndarray::s![0, .., ..])
-                .outer_iter()
-                .map(|row| row.to_vec())
-                .collect();
+            // Reconstruct all summary layers from AOI-only data
+            let total_shadow_hours = reconstruct_raster(&results.summary_stats.total_shadow_hours);
+            let avg_shadow_percentage = reconstruct_raster(&results.summary_stats.avg_shadow_percentage);
+            let max_consecutive_shadow = reconstruct_raster(&results.summary_stats.max_consecutive_shadow);
+            let morning_shadow_hours = reconstruct_raster(&results.summary_stats.morning_shadow_hours);
+            let noon_shadow_hours = reconstruct_raster(&results.summary_stats.noon_shadow_hours);
+            let afternoon_shadow_hours = reconstruct_raster(&results.summary_stats.afternoon_shadow_hours);
+            let daily_solar_hours = reconstruct_raster(&results.summary_stats.daily_solar_hours);
+            let total_available_solar_hours = reconstruct_raster(&results.summary_stats.total_available_solar_hours);
 
             Ok(AllSummaryData {
                 total_shadow_hours,
@@ -575,72 +464,37 @@ async fn export_results(
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
 
-                    // Combine summary stats and time series
+                    // Need to convert AOI-only results back to full raster for GeoTIFF export
+                    let (n_rows, n_cols) = clipped.data.slice(ndarray::s![0, .., ..]).dim();
+                    let (n_times, n_aoi_cells, _) = results.shadow_fraction.dim();
                     let n_summary = 9;
-                    let (n_times, n_rows, n_cols) = results.shadow_fraction.dim();
+
+                    // Reconstruct full raster arrays from AOI-only results
                     let mut combined =
                         ndarray::Array3::<f32>::zeros((n_summary + n_times, n_rows, n_cols));
+                    combined.fill(f32::NAN); // Fill with NaN for cells outside AOI
 
-                    // Add summary layers with proper indexing
-                    combined.slice_mut(ndarray::s![0, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .total_shadow_hours
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![1, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .avg_shadow_percentage
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![2, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .max_consecutive_shadow
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![3, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .morning_shadow_hours
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![4, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .noon_shadow_hours
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![5, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .afternoon_shadow_hours
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![6, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .solar_efficiency_percentage
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![7, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .daily_solar_hours
-                            .slice(ndarray::s![0, .., ..]),
-                    );
-                    combined.slice_mut(ndarray::s![8, .., ..]).assign(
-                        &results
-                            .summary_stats
-                            .total_available_solar_hours
-                            .slice(ndarray::s![0, .., ..]),
-                    );
+                    // Map AOI-only results back to full raster coordinates using stored AOI cells
+                    for aoi_idx in 0..n_aoi_cells {
+                        if aoi_idx < results.aoi_cells.len() {
+                            let (row, col) = results.aoi_cells[aoi_idx];
+                            // Summary stats layers
+                            combined[[0, row, col]] = results.summary_stats.total_shadow_hours[[0, aoi_idx, 0]];
+                            combined[[1, row, col]] = results.summary_stats.avg_shadow_percentage[[0, aoi_idx, 0]];
+                            combined[[2, row, col]] = results.summary_stats.max_consecutive_shadow[[0, aoi_idx, 0]];
+                            combined[[3, row, col]] = results.summary_stats.morning_shadow_hours[[0, aoi_idx, 0]];
+                            combined[[4, row, col]] = results.summary_stats.noon_shadow_hours[[0, aoi_idx, 0]];
+                            combined[[5, row, col]] = results.summary_stats.afternoon_shadow_hours[[0, aoi_idx, 0]];
+                            combined[[6, row, col]] = results.summary_stats.solar_efficiency_percentage[[0, aoi_idx, 0]];
+                            combined[[7, row, col]] = results.summary_stats.daily_solar_hours[[0, aoi_idx, 0]];
+                            combined[[8, row, col]] = results.summary_stats.total_available_solar_hours[[0, aoi_idx, 0]];
 
-                    // Add time series
-                    combined
-                        .slice_mut(ndarray::s![n_summary.., .., ..])
-                        .assign(&results.shadow_fraction);
+                            // Time series layers
+                            for t_idx in 0..n_times {
+                                combined[[n_summary + t_idx, row, col]] = results.shadow_fraction[[t_idx, aoi_idx, 0]];
+                            }
+                        }
+                    }
 
                     // Results are already masked to AOI during calculation
 
@@ -696,14 +550,15 @@ async fn export_results(
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
 
-                    // Results are already masked to AOI during calculation, so use standard CSV export
-                    RasterIO::write_csv(
+                    // Write AOI-only CSV results with coordinate mapping from stored AOI cells
+                    RasterIO::write_csv_aoi_only(
                         &path,
                         &results.shadow_fraction,
                         &results.timestamps,
                         &clipped.transform,
+                        &results.aoi_cells,
                     )
-                    .map_err(|e| format!("Failed to write CSV: {}", e))?;
+                    .map_err(|e| format!("Failed to write AOI-only CSV: {}", e))?;
 
                     Ok(format!("CSV exported to: {}", path.display()))
                 }
@@ -926,6 +781,7 @@ async fn load_results_file(
         shadow_fraction,
         timestamps,
         summary_stats,
+        aoi_cells: Vec::new(), // Empty for seasonal analysis
     };
 
     // Calculate bounds from transform

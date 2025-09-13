@@ -354,6 +354,44 @@ impl RasterIO {
         Ok(())
     }
 
+    /// Write CSV for AOI-only shadow data
+    pub fn write_csv_aoi_only(
+        path: &Path,
+        shadow_data: &Array3<f32>,
+        timestamps: &[chrono::DateTime<chrono::Utc>],
+        transform: &[f64; 6],
+        aoi_cells: &[(usize, usize)],
+    ) -> Result<(), ShadowError> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path)?;
+
+        writeln!(file, "cell_id,lat,lon,datetime,shadow_fraction")?;
+
+        let (n_times, n_aoi_cells, _) = shadow_data.dim();
+
+        for aoi_idx in 0..n_aoi_cells {
+            if aoi_idx < aoi_cells.len() {
+                let (row, col) = aoi_cells[aoi_idx];
+                let (lon, lat) = Self::pixel_to_world(col, row, transform);
+
+                for t_idx in 0..n_times {
+                    let shadow_val = shadow_data[[t_idx, aoi_idx, 0]];
+                    writeln!(
+                        file,
+                        "{},{:.6},{:.6},{},{}",
+                        aoi_idx, // Use AOI index as cell_id
+                        lat,
+                        lon,
+                        timestamps[t_idx].to_rfc3339(),
+                        shadow_val
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn invert_transform(transform: &[f64; 6]) -> [f64; 6] {
         let det = transform[1] * transform[5] - transform[2] * transform[4];
         [
