@@ -425,22 +425,33 @@ impl RasterIO {
             .map_err(|e| ShadowError::Gdal(e))?;
 
         // Convert geo_types polygon to GDAL geometry
-        let coords: Vec<(f64, f64)> = polygon
+        let mut coords: Vec<(f64, f64)> = polygon
             .exterior()
             .coords()
             .map(|c| (c.x, c.y))
             .collect();
+
+        // Ensure polygon is closed (first and last points should be the same)
+        if let (Some(first), Some(last)) = (coords.first(), coords.last()) {
+            if first != last {
+                coords.push(*first);
+            }
+        }
 
         // Create WKT string for the polygon
         let wkt_coords: Vec<String> = coords
             .iter()
             .map(|(x, y)| format!("{} {}", x, y))
             .collect();
-        let wkt = format!("POLYGON(({})", wkt_coords.join(","));
+        let wkt = format!("POLYGON(({}))", wkt_coords.join(", "));
+        println!("Generated WKT: {}", wkt);
 
         // Create geometry from WKT
         let geometry = Geometry::from_wkt(&wkt)
-            .map_err(|e| ShadowError::Gdal(e))?;
+            .map_err(|e| {
+                println!("Failed to create geometry from WKT: {}", wkt);
+                ShadowError::Gdal(e)
+            })?;
 
         // Create and add feature to layer
         layer.create_feature(geometry)
