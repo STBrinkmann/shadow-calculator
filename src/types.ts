@@ -7,7 +7,7 @@ export interface Config {
   start_date: string;
   end_date: string;
   hour_interval: number;
-  buffer_meters: number;
+  buffer_meters?: number; // Now optional - calculated automatically
   angle_precision: number;
   shadow_quality: ShadowQuality;
   cpu_cores?: number; // Optional number of CPU cores to use
