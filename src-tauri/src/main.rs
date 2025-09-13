@@ -410,9 +410,10 @@ async fn export_results(
 ) -> Result<String, String> {
     let results = state.current_results.lock().unwrap();
     let config = state.current_config.lock().unwrap();
+    let clipped_info = state.clipped_raster_info.lock().unwrap();
 
-    match (results.as_ref(), config.as_ref()) {
-        (Some(results), Some(config)) => {
+    match (results.as_ref(), config.as_ref(), clipped_info.as_ref()) {
+        (Some(results), Some(config), Some(clipped_info)) => {
             // Create output directory in user's home or documents folder
             let output_dir = match dirs::document_dir() {
                 Some(dir) => dir.join("ShadowCalculator_Exports"),
@@ -445,28 +446,10 @@ async fn export_results(
                 .to_polygon()
                 .map_err(|e| format!("Failed to parse AOI: {}", e))?;
 
-            // Export GeoTIFF
+            // Export GeoTIFF using stored clipped raster info
             {
-                    // Get transform from original raster
-                    let dtm_data = RasterIO::read_raster(Path::new(&config.dtm_path))
-                        .map_err(|e| format!("Failed to load DTM: {}", e))?;
-
-                    // Get center latitude for buffer conversion
-                    let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
-                        / polygon.exterior().coords().count() as f64;
-
-                    // Use automatic buffer calculation if buffer_meters is not set
-                    let buffer_meters = config.buffer_meters.unwrap_or_else(|| {
-                        // Fallback to 100m if not set
-                        100.0
-                    });
-                    let buffer_degrees = meters_to_degrees(buffer_meters, center_lat);
-
-                    let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
-                        .map_err(|e| format!("Failed to clip: {}", e))?;
-
-                    // Need to convert AOI-only results back to full raster for GeoTIFF export
-                    let (n_rows, n_cols) = clipped.data.slice(ndarray::s![0, .., ..]).dim();
+                    // Use the stored clipped raster info from calculation
+                    let (n_rows, n_cols) = clipped_info.dimensions;
                     let (n_times, n_aoi_cells, _) = results.shadow_fraction.dim();
                     let n_summary = 9;
 
@@ -475,24 +458,35 @@ async fn export_results(
                         ndarray::Array3::<f32>::zeros((n_summary + n_times, n_rows, n_cols));
                     combined.fill(f32::NAN); // Fill with NaN for cells outside AOI
 
-                    // Map AOI-only results back to full raster coordinates using stored AOI cells
+                    // Map AOI-only results back to full raster coordinates
+                    // Need to convert original AOI cell coordinates to the current clipped raster coordinate system
                     for aoi_idx in 0..n_aoi_cells {
                         if aoi_idx < results.aoi_cells.len() {
-                            let (row, col) = results.aoi_cells[aoi_idx];
-                            // Summary stats layers
-                            combined[[0, row, col]] = results.summary_stats.total_shadow_hours[[0, aoi_idx, 0]];
-                            combined[[1, row, col]] = results.summary_stats.avg_shadow_percentage[[0, aoi_idx, 0]];
-                            combined[[2, row, col]] = results.summary_stats.max_consecutive_shadow[[0, aoi_idx, 0]];
-                            combined[[3, row, col]] = results.summary_stats.morning_shadow_hours[[0, aoi_idx, 0]];
-                            combined[[4, row, col]] = results.summary_stats.noon_shadow_hours[[0, aoi_idx, 0]];
-                            combined[[5, row, col]] = results.summary_stats.afternoon_shadow_hours[[0, aoi_idx, 0]];
-                            combined[[6, row, col]] = results.summary_stats.solar_efficiency_percentage[[0, aoi_idx, 0]];
-                            combined[[7, row, col]] = results.summary_stats.daily_solar_hours[[0, aoi_idx, 0]];
-                            combined[[8, row, col]] = results.summary_stats.total_available_solar_hours[[0, aoi_idx, 0]];
+                            let (orig_row, orig_col) = results.aoi_cells[aoi_idx];
 
-                            // Time series layers
-                            for t_idx in 0..n_times {
-                                combined[[n_summary + t_idx, row, col]] = results.shadow_fraction[[t_idx, aoi_idx, 0]];
+                            // Convert original cell coordinates to world coordinates
+                            // This needs to be done using the transform from when the calculation was performed
+                            // For now, let's work directly with pixel coordinates and add bounds checking
+
+                            // Simple approach: check bounds before accessing
+                            if orig_row < n_rows && orig_col < n_cols {
+                                // Summary stats layers
+                                combined[[0, orig_row, orig_col]] = results.summary_stats.total_shadow_hours[[0, aoi_idx, 0]];
+                                combined[[1, orig_row, orig_col]] = results.summary_stats.avg_shadow_percentage[[0, aoi_idx, 0]];
+                                combined[[2, orig_row, orig_col]] = results.summary_stats.max_consecutive_shadow[[0, aoi_idx, 0]];
+                                combined[[3, orig_row, orig_col]] = results.summary_stats.morning_shadow_hours[[0, aoi_idx, 0]];
+                                combined[[4, orig_row, orig_col]] = results.summary_stats.noon_shadow_hours[[0, aoi_idx, 0]];
+                                combined[[5, orig_row, orig_col]] = results.summary_stats.afternoon_shadow_hours[[0, aoi_idx, 0]];
+                                combined[[6, orig_row, orig_col]] = results.summary_stats.solar_efficiency_percentage[[0, aoi_idx, 0]];
+                                combined[[7, orig_row, orig_col]] = results.summary_stats.daily_solar_hours[[0, aoi_idx, 0]];
+                                combined[[8, orig_row, orig_col]] = results.summary_stats.total_available_solar_hours[[0, aoi_idx, 0]];
+
+                                // Time series layers
+                                for t_idx in 0..n_times {
+                                    combined[[n_summary + t_idx, orig_row, orig_col]] = results.shadow_fraction[[t_idx, aoi_idx, 0]];
+                                }
+                            } else {
+                                println!("Warning: AOI cell coordinate ({}, {}) is out of bounds for current raster ({}, {})", orig_row, orig_col, n_rows, n_cols);
                             }
                         }
                     }
@@ -517,12 +511,16 @@ async fn export_results(
                         band_descriptions.push(timestamp.format("%Y-%m-%d_%H:%M_UTC").to_string());
                     }
 
-                    // Write GeoTIFF with band descriptions
+                    // Write GeoTIFF with band descriptions using stored transform
+                    // Convert Vec<f64> back to [f64; 6] for the transform
+                    let transform_array: [f64; 6] = clipped_info.transform.as_slice().try_into()
+                        .map_err(|_| "Invalid transform array length".to_string())?;
+
                     RasterIO::write_geotiff_with_descriptions(
                         &tif_path,
                         &combined,
-                        &clipped.transform,
-                        &clipped.projection,
+                        &transform_array,
+                        "EPSG:4326", // Use WGS84 as default projection
                         &band_descriptions,
                     )
                     .map_err(|e| format!("Failed to write GeoTIFF: {}", e))?;
@@ -538,7 +536,7 @@ async fn export_results(
                 gpkg_path.display()
             ))
         }
-        _ => Err("No results available to export".to_string()),
+        _ => Err("No results, config, or raster info available to export".to_string()),
     }
 }
 

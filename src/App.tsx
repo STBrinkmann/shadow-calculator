@@ -609,14 +609,7 @@ function App() {
                   disabled={isCalculating}
                   className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                 >
-                  Export as GeoTIFF
-                </button>
-                <button
-                  onClick={() => handleExport('csv')}
-                  disabled={isCalculating}
-                  className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
-                >
-                  Export as CSV
+                  Export Results (TIF + GPKG)
                 </button>
               </div>
             )}
