@@ -21,6 +21,7 @@ struct AppState {
     current_results: Mutex<Option<ShadowResult>>,
     raster_bounds: Mutex<Option<RasterBounds>>,
     clipped_raster_info: Mutex<Option<ClippedRasterInfo>>,
+    aoi_polygon: Mutex<Option<geo_types::Polygon<f64>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,7 +405,7 @@ async fn get_all_summary_data(state: State<'_, AppState>) -> Result<AllSummaryDa
 #[tauri::command]
 async fn export_results(
     output_path: String,
-    format: String,
+    _format: String, // Only GeoTIFF + GPKG supported now
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let results = state.current_results.lock().unwrap();
@@ -429,26 +430,26 @@ async fn export_results(
             // Generate timestamp for unique filename
             let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
 
-            // Build full path with timestamp
-            let filename = match format.as_str() {
-                "geotiff" => format!("shadows_{}.tif", timestamp),
-                "csv" => format!("shadows_{}.csv", timestamp),
-                _ => output_path.clone(),
-            };
+            // Build full paths with timestamp for both TIF and GPKG
+            let tif_filename = format!("shadows_{}.tif", timestamp);
+            let gpkg_filename = format!("aoi_{}.gpkg", timestamp);
 
-            let path = output_dir.join(&filename);
+            let tif_path = output_dir.join(&tif_filename);
+            let gpkg_path = output_dir.join(&gpkg_filename);
 
-            println!("Exporting to: {:?}", path);
+            println!("Exporting GeoTIFF to: {:?}", tif_path);
+            println!("Exporting AOI GPKG to: {:?}", gpkg_path);
 
-            match format.as_str() {
-                "geotiff" => {
+            // Get AOI polygon (needed for both exports)
+            let polygon = config
+                .to_polygon()
+                .map_err(|e| format!("Failed to parse AOI: {}", e))?;
+
+            // Export GeoTIFF
+            {
                     // Get transform from original raster
                     let dtm_data = RasterIO::read_raster(Path::new(&config.dtm_path))
                         .map_err(|e| format!("Failed to load DTM: {}", e))?;
-
-                    let polygon = config
-                        .to_polygon()
-                        .map_err(|e| format!("Failed to parse AOI: {}", e))?;
 
                     // Get center latitude for buffer conversion
                     let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
@@ -518,52 +519,24 @@ async fn export_results(
 
                     // Write GeoTIFF with band descriptions
                     RasterIO::write_geotiff_with_descriptions(
-                        &path,
+                        &tif_path,
                         &combined,
                         &clipped.transform,
                         &clipped.projection,
                         &band_descriptions,
                     )
                     .map_err(|e| format!("Failed to write GeoTIFF: {}", e))?;
-
-                    Ok(format!("GeoTIFF exported to: {}", path.display()))
-                }
-                "csv" => {
-                    let dtm_data = RasterIO::read_raster(Path::new(&config.dtm_path))
-                        .map_err(|e| format!("Failed to load DTM: {}", e))?;
-
-                    let polygon = config
-                        .to_polygon()
-                        .map_err(|e| format!("Failed to parse AOI: {}", e))?;
-
-                    // Get center latitude for buffer conversion
-                    let center_lat = polygon.exterior().coords().map(|c| c.y).sum::<f64>()
-                        / polygon.exterior().coords().count() as f64;
-
-                    // Use automatic buffer calculation if buffer_meters is not set
-                    let buffer_meters = config.buffer_meters.unwrap_or_else(|| {
-                        // Fallback to 100m if not set
-                        100.0
-                    });
-                    let buffer_degrees = meters_to_degrees(buffer_meters, center_lat);
-
-                    let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
-                        .map_err(|e| format!("Failed to clip: {}", e))?;
-
-                    // Write AOI-only CSV results with coordinate mapping from stored AOI cells
-                    RasterIO::write_csv_aoi_only(
-                        &path,
-                        &results.shadow_fraction,
-                        &results.timestamps,
-                        &clipped.transform,
-                        &results.aoi_cells,
-                    )
-                    .map_err(|e| format!("Failed to write AOI-only CSV: {}", e))?;
-
-                    Ok(format!("CSV exported to: {}", path.display()))
-                }
-                _ => Err("Unsupported format".to_string()),
             }
+
+            // Export AOI polygon as GPKG
+            RasterIO::write_gpkg(&gpkg_path, &polygon)
+                .map_err(|e| format!("Failed to write AOI GPKG: {}", e))?;
+
+            Ok(format!(
+                "Export complete:\n- GeoTIFF: {}\n- AOI GPKG: {}",
+                tif_path.display(),
+                gpkg_path.display()
+            ))
         }
         _ => Err("No results available to export".to_string()),
     }
@@ -724,6 +697,33 @@ async fn load_results_file(
     let (raster_data, band_descriptions) = RasterIO::read_multiband_raster_with_descriptions(path)
         .map_err(|e| format!("Failed to read results file: {}", e))?;
 
+    // Check for accompanying GPKG file with same base name
+    let mut aoi_polygon: Option<geo_types::Polygon<f64>> = None;
+    if let Some(parent_dir) = path.parent() {
+        if let Some(file_stem) = path.file_stem() {
+            if let Some(stem_str) = file_stem.to_str() {
+                // Look for GPKG with pattern: aoi_<timestamp>.gpkg where TIF is shadows_<timestamp>.tif
+                if stem_str.starts_with("shadows_") {
+                    let timestamp = &stem_str[8..]; // Remove "shadows_" prefix
+                    let gpkg_name = format!("aoi_{}.gpkg", timestamp);
+                    let gpkg_path = parent_dir.join(gpkg_name);
+
+                    if gpkg_path.exists() {
+                        match RasterIO::read_gpkg(&gpkg_path) {
+                            Ok(polygon) => {
+                                aoi_polygon = Some(polygon);
+                                println!("Loaded AOI polygon from: {:?}", gpkg_path);
+                            },
+                            Err(e) => {
+                                println!("Warning: Failed to load AOI GPKG: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let shape = raster_data.data.shape();
     let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
 
@@ -814,9 +814,19 @@ async fn load_results_file(
     let mut bounds_guard = state.raster_bounds.lock().unwrap();
     *bounds_guard = Some(bounds);
 
+    // Store AOI polygon if loaded
+    let mut aoi_guard = state.aoi_polygon.lock().unwrap();
+    *aoi_guard = aoi_polygon;
+
+    let aoi_message = if aoi_guard.is_some() {
+        " (with AOI polygon)"
+    } else {
+        ""
+    };
+
     Ok(format!(
-        "Loaded results with {} summary layers and {} timestamps",
-        5, num_time_bands
+        "Loaded results with {} summary layers and {} timestamps{}",
+        5, num_time_bands, aoi_message
     ))
 }
 
@@ -1094,6 +1104,7 @@ fn main() {
             current_results: Mutex::new(None),
             raster_bounds: Mutex::new(None),
             clipped_raster_info: Mutex::new(None),
+            aoi_polygon: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             load_rasters,

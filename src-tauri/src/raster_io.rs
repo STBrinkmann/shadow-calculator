@@ -392,6 +392,126 @@ impl RasterIO {
         Ok(())
     }
 
+    /// Write AOI polygon as GPKG file
+    pub fn write_gpkg(path: &Path, polygon: &geo_types::Polygon<f64>) -> Result<(), ShadowError> {
+        use gdal::vector::*;
+        use gdal::DriverManager;
+        use gdal::spatial_ref::SpatialRef;
+
+        // Create GPKG dataset
+        let driver = DriverManager::get_driver_by_name("GPKG")
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        let mut dataset = driver
+            .create_vector_only(path)
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Create spatial reference for WGS84
+        let spatial_ref = SpatialRef::from_epsg(4326)
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Create layer with proper options
+        let mut layer = dataset
+            .create_layer(gdal::LayerOptions {
+                name: "aoi",
+                srs: Some(&spatial_ref),
+                ty: gdal::vector::OGRwkbGeometryType::wkbPolygon,
+                options: None,
+            })
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Add a simple field
+        layer.create_defn_fields(&[("name", gdal::vector::OGRFieldType::OFTString as u32)])
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Convert geo_types polygon to GDAL geometry
+        let coords: Vec<(f64, f64)> = polygon
+            .exterior()
+            .coords()
+            .map(|c| (c.x, c.y))
+            .collect();
+
+        // Create WKT string for the polygon
+        let wkt_coords: Vec<String> = coords
+            .iter()
+            .map(|(x, y)| format!("{} {}", x, y))
+            .collect();
+        let wkt = format!("POLYGON(({})", wkt_coords.join(","));
+
+        // Create geometry from WKT
+        let geometry = Geometry::from_wkt(&wkt)
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Create and add feature to layer
+        layer.create_feature(geometry)
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        Ok(())
+    }
+
+    /// Read AOI polygon from GPKG file
+    pub fn read_gpkg(path: &Path) -> Result<geo_types::Polygon<f64>, ShadowError> {
+        use gdal::Dataset;
+        use gdal::vector::LayerAccess;
+
+        // Open GPKG dataset
+        let dataset = Dataset::open(path)
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Get the first layer
+        let mut layer = dataset.layer(0)
+            .map_err(|e| ShadowError::Gdal(e))?;
+
+        // Get the first feature (assuming there's at least one)
+        let feature = layer.feature(0);
+
+        if let Some(feature) = feature {
+            let geometry = feature.geometry()
+                .ok_or_else(|| ShadowError::Config("No geometry found in feature".to_string()))?;
+            let wkt = geometry.wkt()
+                .map_err(|e| ShadowError::Gdal(e))?;
+
+            // Parse WKT to geo_types polygon
+            // For now, let's do a simple WKT parsing
+            // This is a basic implementation - could be improved with proper WKT parsing
+            if wkt.starts_with("POLYGON") {
+                // Extract coordinates from WKT: POLYGON((x1 y1, x2 y2, ...))
+                let coords_str = wkt
+                    .strip_prefix("POLYGON((")
+                    .and_then(|s| s.strip_suffix("))"))
+                    .ok_or_else(|| ShadowError::Config("Invalid WKT format".to_string()))?;
+
+                let coords: Result<Vec<(f64, f64)>, _> = coords_str
+                    .split(",")
+                    .map(|pair| {
+                        let parts: Vec<&str> = pair.trim().split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            let x = parts[0].parse::<f64>()
+                                .map_err(|_| ShadowError::Config("Invalid coordinate".to_string()))?;
+                            let y = parts[1].parse::<f64>()
+                                .map_err(|_| ShadowError::Config("Invalid coordinate".to_string()))?;
+                            Ok((x, y))
+                        } else {
+                            Err(ShadowError::Config("Invalid coordinate pair".to_string()))
+                        }
+                    })
+                    .collect();
+
+                let coords = coords?;
+                let polygon = geo_types::Polygon::new(
+                    geo_types::LineString::from(coords),
+                    vec![],
+                );
+
+                Ok(polygon)
+            } else {
+                Err(ShadowError::Config("Expected POLYGON geometry".to_string()))
+            }
+        } else {
+            Err(ShadowError::Config("No features found in GPKG".to_string()))
+        }
+    }
+
     fn invert_transform(transform: &[f64; 6]) -> [f64; 6] {
         let det = transform[1] * transform[5] - transform[2] * transform[4];
         [
