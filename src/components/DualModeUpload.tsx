@@ -80,7 +80,9 @@ const DualModeUpload: React.FC<DualModeUploadProps> = ({
       const selected = await open({
         title: 'Select Results File',
         filters: [
+          { name: 'Shadow Results', extensions: ['tif', 'tiff', 'gpkg'] },
           { name: 'GeoTIFF Files', extensions: ['tif', 'tiff'] },
+          { name: 'GeoPackage Files', extensions: ['gpkg'] },
         ],
       });
       
@@ -147,7 +149,7 @@ const DualModeUpload: React.FC<DualModeUploadProps> = ({
               className="text-blue-600 focus:ring-blue-500"
             />
             <label htmlFor="upload-mode" className="text-sm text-gray-300">
-              Load Results (Upload .tif results file)
+              Load Results (Upload .tif or .gpkg file)
             </label>
           </div>
         </div>

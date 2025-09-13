@@ -575,16 +575,46 @@ async fn validate_results_file(file_path: String) -> Result<ResultsMetadata, Str
     let path = Path::new(&file_path);
 
     // Check file extension
-    if !path
+    let extension = path
         .extension()
-        .map_or(false, |ext| ext == "tif" || ext == "tiff")
-    {
-        return Err("File must be a .tif or .tiff file".to_string());
-    }
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
 
+    match extension {
+        "tif" | "tiff" => {
+            // Handle TIF files
+            let (raster_data, band_descriptions) = RasterIO::read_multiband_raster_with_descriptions(path)
+                .map_err(|e| format!("Failed to read raster file: {}", e))?;
+
+            return validate_tif_file(raster_data, band_descriptions);
+        },
+        "gpkg" => {
+            // Handle GPKG files - they only contain AOI polygon
+            let _polygon = RasterIO::read_gpkg(path)
+                .map_err(|e| format!("Failed to read GPKG file: {}", e))?;
+
+            return Ok(ResultsMetadata {
+                start_date: "N/A".to_string(),
+                end_date: "N/A".to_string(),
+                hour_interval: 0.0,
+                total_timestamps: 0,
+                summary_layers: vec!["AOI Polygon".to_string()],
+                bounds: RasterBounds {
+                    min_lon: 0.0,
+                    max_lon: 0.0,
+                    min_lat: 0.0,
+                    max_lat: 0.0,
+                },
+            });
+        },
+        _ => {
+            return Err("File must be a .tif, .tiff, or .gpkg file".to_string());
+        }
+    }
+}
+
+fn validate_tif_file(raster_data: crate::types::RasterData, band_descriptions: Vec<String>) -> Result<ResultsMetadata, String> {
     // Try to read the raster file with all bands and descriptions
-    let (raster_data, band_descriptions) = RasterIO::read_multiband_raster_with_descriptions(path)
-        .map_err(|e| format!("Failed to read raster file: {}", e))?;
 
     let shape = raster_data.data.shape();
     let (n_bands, n_rows, n_cols) = (shape[0], shape[1], shape[2]);
@@ -690,7 +720,28 @@ async fn load_results_file(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let path = Path::new(&file_path);
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
 
+    match extension {
+        "tif" | "tiff" => {
+            return load_tif_results(path, state).await;
+        },
+        "gpkg" => {
+            return load_gpkg_results(path, state).await;
+        },
+        _ => {
+            return Err("File must be a .tif, .tiff, or .gpkg file".to_string());
+        }
+    }
+}
+
+async fn load_tif_results(
+    path: &Path,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     // Read the results file with all bands and descriptions
     let (raster_data, band_descriptions) = RasterIO::read_multiband_raster_with_descriptions(path)
         .map_err(|e| format!("Failed to read results file: {}", e))?;
@@ -826,6 +877,31 @@ async fn load_results_file(
         "Loaded results with {} summary layers and {} timestamps{}",
         5, num_time_bands, aoi_message
     ))
+}
+
+async fn load_gpkg_results(
+    path: &Path,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Load AOI polygon from GPKG file
+    let polygon = RasterIO::read_gpkg(path)
+        .map_err(|e| format!("Failed to read GPKG file: {}", e))?;
+
+    // Store AOI polygon in state
+    let mut aoi_guard = state.aoi_polygon.lock().unwrap();
+    *aoi_guard = Some(polygon);
+
+    // Clear results and metadata since GPKG only contains AOI
+    let mut results_guard = state.current_results.lock().unwrap();
+    *results_guard = None;
+
+    let mut clipped_info_guard = state.clipped_raster_info.lock().unwrap();
+    *clipped_info_guard = None;
+
+    let mut bounds_guard = state.raster_bounds.lock().unwrap();
+    *bounds_guard = None;
+
+    Ok("Loaded AOI polygon from GPKG file. Ready for new calculation.".to_string())
 }
 
 #[tauri::command]
