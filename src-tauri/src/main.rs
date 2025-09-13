@@ -201,11 +201,100 @@ async fn calculate_shadows(
         config_with_meter_buffer,
         app_handle,
     );
-    let results = engine
+    let mut results = engine
         .calculate_shadows()
         .map_err(|e| format!("Shadow calculation failed: {}", e))?;
 
     let num_timestamps = results.timestamps.len();
+
+    // Apply AOI masking to results before storing for visualization and analysis
+    let polygon = config
+        .to_polygon()
+        .map_err(|e| format!("Failed to parse AOI for masking: {}", e))?;
+
+    // Mask the shadow fraction data (time series)
+    RasterIO::mask_results_to_aoi(
+        &mut results.shadow_fraction,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask shadow fraction results to AOI: {}", e))?;
+
+    // Mask all summary stats layers
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.total_shadow_hours,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask total shadow hours to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.avg_shadow_percentage,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask avg shadow percentage to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.max_consecutive_shadow,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask max consecutive shadow to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.morning_shadow_hours,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask morning shadow hours to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.noon_shadow_hours,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask noon shadow hours to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.afternoon_shadow_hours,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask afternoon shadow hours to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.solar_efficiency_percentage,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask solar efficiency percentage to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.daily_solar_hours,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask daily solar hours to AOI: {}", e))?;
+
+    RasterIO::mask_results_to_aoi(
+        &mut results.summary_stats.total_available_solar_hours,
+        &polygon,
+        &dtm_clipped.transform,
+        f32::NAN,
+    )
+    .map_err(|e| format!("Failed to mask total available solar hours to AOI: {}", e))?;
+
+    println!("Results masked to AOI boundaries for visualization and analysis");
 
     // Store results in state
     let mut results_guard = state.current_results.lock().unwrap();
@@ -553,14 +642,7 @@ async fn export_results(
                         .slice_mut(ndarray::s![n_summary.., .., ..])
                         .assign(&results.shadow_fraction);
 
-                    // Mask results to AOI before saving
-                    RasterIO::mask_results_to_aoi(
-                        &mut combined,
-                        &polygon,
-                        &clipped.transform,
-                        f32::NAN,
-                    )
-                    .map_err(|e| format!("Failed to mask results to AOI: {}", e))?;
+                    // Results are already masked to AOI during calculation
 
                     // Create band descriptions for better identification
                     let mut band_descriptions = vec![
@@ -614,13 +696,12 @@ async fn export_results(
                     let clipped = RasterIO::clip_to_aoi(&dtm_data, &polygon, buffer_degrees)
                         .map_err(|e| format!("Failed to clip: {}", e))?;
 
-                    // Write CSV with AOI masking (only export cells inside AOI)
-                    RasterIO::write_csv_with_aoi_mask(
+                    // Results are already masked to AOI during calculation, so use standard CSV export
+                    RasterIO::write_csv(
                         &path,
                         &results.shadow_fraction,
                         &results.timestamps,
                         &clipped.transform,
-                        &polygon,
                     )
                     .map_err(|e| format!("Failed to write CSV: {}", e))?;
 
