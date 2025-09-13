@@ -624,17 +624,18 @@ function App() {
         </aside>
         
         <main className={`flex-1 flex ${isCalculating ? 'pointer-events-none' : ''}`}>
-          {currentView === 'map' ? (
-            <div className="flex-1 relative">
-              <MapView 
+          <div className="flex-1 relative">
+            {/* Always keep MapView mounted and visible to preserve AOI polygon and legend */}
+            <div className="w-full h-full">
+              <MapView
                 onAOIDrawn={handleAOIDrawn}
                 rasterBounds={rasterBounds}
                 averageShadowRaster={averageShadowRaster}
                 allSummaryData={allSummaryData}
                 uploadMode={uploadMode}
               />
-              
-              {hasResults && (
+
+              {hasResults && currentView === 'map' && (
                 <ResultsPanel
                   currentTimeIndex={currentTimeIndex}
                   onTimeChange={handleTimeChange}
@@ -643,9 +644,14 @@ function App() {
                 />
               )}
             </div>
-          ) : (
-            <SeasonalDashboardInline data={seasonalData} />
-          )}
+
+            {/* Overlay seasonal dashboard when in seasonal view */}
+            {currentView === 'seasonal' && (
+              <div className="absolute inset-0 bg-white z-10">
+                <SeasonalDashboardInline data={seasonalData} />
+              </div>
+            )}
+          </div>
         </main>
       </div>
       
